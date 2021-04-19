@@ -1,0 +1,1358 @@
+---
+title: "YearUp Labor Training Project: Building and Analyzing the Wage Change Prediction Model"
+author: "YOUR NAME"
+date: "April 2021"
+output: 
+  html_document:
+    highlight: haddock
+    theme: journal
+    number_sections: no
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+    code_folding: hide
+---
+
+
+# Introduction to the Project
+In this project, we want to measure and analyze the returns to participating in the YearUp labor training program. Specifically, we ask the question: what is the increase in participants’ earnings after they participated in the program, compared to what their earnings would have been had they not participated? We are then interested to know whether these returns differ by subgroups.
+
+Ideally, we would run an experiment or a randomized control trial (RCT) to figure this out: in doing that, we would randomize individuals into a treatment (Year Up program participation) and a control group (go on with their lives as before), and make sure the two groups had on average, the same characteristics. We could then simply compare the average wage change in the treatment group to the average change in the control group and obtain the Year Up treatment effect. However, sometimes it is just not feasible to run an experiment and can be very costly, especially for an organization such as Year Up which runs its training program across 25 different locations in the US. This is generally often true in many social science and policy settings. It is therefore helpful to know how to evaluate program effects using statistical approximations. These are not perfect, because they often require assumptions that are hard to test, but they are a great deal better than naive alternatives (i.e. comparing the pre- and post-YU earnings), which we will discuss in the next paragraph.
+
+The data we received from Year Up (YU) includes the records of 1,469 individuals who _completed_ the program. We know their pre- and post-YU wages, occupations, and a few socio-economic characteristics. However, we do not have a control group (for example, a group of applicants who applied to Year Up but did not get into the program and who have similar characteristics to the Year Up participants). How can we then calculate program effectiveness? You may say, we could simply look at the before and after wages of our participants. This is certainly a great first proxy; however, the problem with this approach is that a year is a long time, and had our program participants not participated in YU, they might have done a whole host of other things in that time to boost their income, such as change jobs, get promoted, etc. This is particularly problematic if there is something about Year Up participants that makes them exceptionally motivated to turn their lives around. Maybe in truth, these people would have had high earning changes even in the absence of the program. Thus, what we need in order to tackle this problem without experiments or RCTs is to build a counterfactual. A counterfactual allows us to answer the question: what would these individuals have earned, had they not participated in Year Up?
+
+To build a counterfactual for the YU participants, we start by building a wage prediction model using an external dataset, the Current Population Survey (CPS). We train the model on the CPS data because it represents a sample of the general U.S population. We also preprocess the CPS sample used for wage prediction model to make it look more like our YU participant sample (i.e. we filter out the occupations of CPS observations that do not appear in the YU data).
+We then use the wage prediction model to predict the counterfactual changes in earnings for the YU participants (i.e. what YU participants' wage changes would have been had they not attended the program). After obtaining the counterfactuals, we build a YU training program treatment effect model. For the treatment sample, we use the actual data on YU participants (including the post-training earnings). For the control sample, we clone the YU sample with all its characteristics (excluding the post-training earnings) and use the counterfactual obtained by the wage prediction model instead of the actual post-training earnings.
+
+Finally, we compare the mean differences in actual (post-treatment) earnings changes with the counterfactual changes to get our best estimate of the Year Up training program returns across all participants as well as for participant subgroups, in the absence of an RCT. We use various observable characteristics of the YU participants to create the participant subgroups, such as: gender, race, location etc. You will also get the chance to come up with other participant subgroups and analyze the return of the YU program on those subgroups.
+
+# Tutorial Overview
+In this tutorial, we will be building a model to predict year-over-year change in wages, using the CPS data. We will take the following steps:
+
+1) We start by *loading and getting to know the data*. This includes: loading all the necessary R packages, loading the data, familiarizing ourselves with the data through the codebooks and summary statistics. As described in the introduction, we use an external data set because we are interested in building a “counterfactual” - i.e. what would have happened to Year Up participants’ yearly earnings had they not participated in the training program? To that end, we use the CPS dataset because it represents a more general population in order to create a sample of non-treated individuals.
+
+2) Transforming and pre-processing the data: to prepare the dataset for the training of the model, we get rid of outliers and other unnecessary data points, log transform the outcome variable as well as scale and center (i.e. standardize) the data used as inputs to the prediction models.
+
+3) The next step is to build and evaluate different prediction models for year-over-year wage changes using the CPS data. Note that we only use the variables in the CPS data that we also have in the Year Up data. We start with a linear model and then build a lasso, ridge, and random forest model. For each of those, we train the model on a training set and test its performance on a test set. We also compare the performance across different models.
+
+4) The final step of the tutorial is a calibration exercise. Here, we are interested in figuring out whether our predictions are well-calibrated against the true values, i.e. whether on average, our predictions are correct or biased.
+We do this calibration exercise for all the different models and then use the best model to perform calibration analysis on subgroups of participants. This will turn out to be important for later parts in this project - since we want to analyze heterogeneous treatment effects, it is important to make sure our predictions are well-calibrated both overall as well as on the population subgroups in question. 
+
+
+# Load and get to know the data
+We use the Current Population Survey (CPS) to build our wage prediction model. This is a representative sample of the entire US population and is a large monthly household survey. Originally, the data includes 8 waves per household in a rotation scheme that spans one year and fourth months in total: a household first gets interviewed during four consecutive months, which is repeated after 8 months, and then again gets interviewed for four months. We only keep two waves per individual at two points that are one year apart. You can find more information about the dataset, its original structure, and variables here: [https://cps.ipums.org/cps/](https://cps.ipums.org/cps/).
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  eval = TRUE,
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE
+ # results = 'hide'
+)
+
+```
+
+## Load the necessary packages
+Before interacting with the datasets, the first step is to load the necessary packages into R. Packages that are deemed ``necessary'' vary with the analyses you perform. The packages in the code below are specifically relevant to the analyses in these tutorials.
+
+```{r load_tidyverse}
+# Ensure that pacman is installed for package management and loading.
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse) # for data reading wrangling and visualization
+
+```
+
+```{r load_packages}
+# for enabling dataframe manipulation
+pacman::p_load(dplyr)
+# for modeling, transforming, and visualizing data
+pacman::p_load(tidyverse)
+# for simplifying the process of creating tidy dat
+pacman::p_load(tidyr)
+# for working with tabular data
+pacman::p_load(data.table)
+# for data visualization
+pacman::p_load(ggplot2)
+# provides support to ggplot2 for labeling graphs
+pacman::p_load(directlabels)
+# for streamlining the model training process 
+pacman::p_load(caret)
+# for fitting a generalized linear model 
+pacman::p_load(glmnet)
+# for enabling fast implementation of random forests 
+pacman::p_load(ranger)
+# for providing a general-purpose tool for dynamic report generation
+pacman::p_load(knitr)
+# for providing a prettier RMarkdown (1.0.1)
+pacman::p_load(kableExtra)
+# for forest-based statistical estimation and inference
+pacman::p_load(grf)
+```
+
+## Load and merge the datasets
+We begin by reading in the CPS data as well as the task and county-level data. We then select the columns from the county-level dataset which are relevant for our analysis and merge this dataset with task and CPS datasets. Finally, we filter out all the CPS data observations dating before 2005 because we only have data on YU participants from 2005 onwards and we want the time periods for the CPS and YU samples to match in order to build a counterfactual properly;  i.e. we can "help" the model to more accurately predict on our target data, in this case the YU data, by training it on data that resembles the target data more closely. This leaves us with a dataset of just under 400,000 individuals, which is still a sizable number of individuals for building our wage prediction model.
+
+In addition to the CPS data, we will be enriching the dataset by merging auxillary data that characterize the locations and occupations of the individuals in the data. We will then be adding the same data to the YU data. 
+
+The auxillary occupation data stems from Autor and Dorn’s 2013 paper: “The Growth of Low-Skill Service Jobs and the Polarization of the US Labor Market” and described the routine, manual and abstract task intensity of occupations. More information about the data can be found [here](https://www.ddorn.net/data.htm). The auxillary location data comes from “Neighborhood Characteristics by County” in Opportunity Insight’s data library which can be found [here](https://opportunityinsights.org/data/).
+
+```{r read_data}
+
+# Load CPS data
+cps_7018<-fread("Datasets/cps_7018_wide_earn.csv")
+
+# Load task data
+tasks<-fread("Datasets/tasks_1990dd.csv")
+
+# Load county-level data
+county_vars<-fread("Datasets/count_level_covars.csv")
+
+# Select the relevant county variables to be merged with the CPS data
+county_vars<-county_vars %>%
+  select(cty, county_name, cty_pop2000, cz, cz_name, cz_pop2000, intersects_msa, cs00_seg_inc, cs00_seg_inc_pov25, cs00_seg_inc_aff75, cs_race_theil_2000, gini99, poor_share, inc_share_1perc, frac_middleclass, rel_tot, cs_frac_black, cs_frac_hisp, unemp_rate, pop_d_2000_1980, lf_d_2000_1980, cs_labforce, cs_elf_ind_man, cs_born_foreign, mig_inflow, mig_outflow, pop_density, frac_traveltime_lt15, hhinc00, median_house_value, cs_educ_ba, cs_fam_wkidsinglemom, crime_total, subcty_exp_pc, taxrate, tax_st_diff_top20)
+
+# Merge county variables with the CPS and task data
+cps_7018<- merge(cps_7018,county_vars, by.x="county_1", by.y = "cty")
+cps_7018<- merge(tasks,cps_7018,by.x="occ1990", by.y="occ1990_1")
+
+# Filter out observations dating before 2005 
+cps_7018 <- cps_7018  %>% 
+  dplyr::filter(year_1>2005)
+
+```
+
+We continue processing the CPS data by filtering out all occupations that do not match the YU participants' occupations. To do so, we begin by defining the `yu_occ` variable that specifies all the occupation codes corresponding to the occupations of YU participants. We then filter out all observations in the CPS data that do not match any of the occupations of the YU participants.
+
+Finally, we select and name the relevant CPS data columns that we will be using in our analysis. Since we will be wanting to predict on the Year Up data later, we need to make sure that (1) all variables we want to use in our wage model exist in both data sets and (2) all variables are defined and scaled the same way across both data sets. It is no use training our model on a variable that does not exist in the target data.
+
+```{r preprocess_cps_occ}
+
+# Specify occupation codes corresponding to the occupations of YU participants
+yu_occ <- c(0,1007,1050,2000,2800,3420,4020,4130,4720,4740,4760,4850,4940,5240,5300,5400,9620,160,650,2016,4060,4140,4700,5350,5860,6440,6930,8340,110,1060,2910,4800,20,140,205,230,310,620,640,700,725,735,1220,2630,2720,2840,3255,3640,3800,3850,3910,3930,3955,4000,4030,4110,4120,4150,4220,4340,4600,4610,4620,4640,4710,5110,5120,5260,5520,5620,5700,5900,6050,6355,7000,7130,7720,7800,7810,7840,8740,8950,9300,9630,9640,420,930,1550,2825,4050,4420,4430,5310,5320,5600,5610,7020,7200,7710,9610,1006,2830,4010,4200,4250,4820,4900,5000,5020,4510,9350,565,2810,8360,9415,5630,6320,530,810,3600,4750,5510,5830,6420,7700,9130,4350,5220,5810,7730,2310,8255,60,540,726,910,1030,1107,2540,2600,2710,2860,2900,3645,5100,5500,5800,6230,7120,7150,7315,7420,8810,8830,137,410,1910,2440,3648,4530,4920,5150,5550,5850,7350,4830,6260,1010,740,1020,50,120,850,3510,4240,7010,9360)
+
+# Filter out all CPS observations that do not match any of the occupations of the YU participants
+cps_df<-cps_7018 %>%
+  dplyr::filter(occ2010_1 %in% yu_occ)
+
+# Select and name the relevant CPS data columns for our analysis
+cps_df<- cps_df %>%
+  select(d_earn,
+         occ2010_1,year_1,cpsidp,occ1digit_1,age_1,age2_1,sex_1,race_white_1,race_black_1,race_asian_1,
+         edu_num_1, experience_1,experience2_1,metfips_1,
+         RTIa,task_abstract,task_routine,task_manual,county_1,region_large_1,
+         county_name,cty_pop2000,cz,cz_name,cz_pop2000,intersects_msa,
+         cs00_seg_inc,cs00_seg_inc_pov25,cs00_seg_inc_aff75,
+         cs_race_theil_2000,gini99,poor_share,inc_share_1perc,
+         frac_middleclass,rel_tot,cs_frac_black,
+         cs_frac_hisp,unemp_rate,pop_d_2000_1980,lf_d_2000_1980,
+         cs_labforce,cs_elf_ind_man,cs_born_foreign,mig_inflow,
+         mig_outflow,pop_density,frac_traveltime_lt15,hhinc00,
+         median_house_value,cs_educ_ba, cs_fam_wkidsinglemom,crime_total,subcty_exp_pc,
+         taxrate,tax_st_diff_top20, real_yearly_earnings_1, real_yearly_earnings_2)
+
+colnames(cps_df)<- c( "d_earn", "occ2010","year","cpsidp","occ1digit","age","age2","sex",
+                     "race_white","race_black","race_asian","edu_num" ,"experience","experience2",
+                     "metfips", "RTIa","task_abstract","task_routine",
+                     "task_manual","county","region_large",
+                    "county_name","cty_pop2000","cz","cz_name","cz_pop2000","intersects_msa",
+                    "cs00_seg_inc","cs00_seg_inc_pov25","cs00_seg_inc_aff75",
+                    "cs_race_theil_2000","gini99","poor_share","inc_share_1perc",
+                    "frac_middleclass","rel_tot","cs_frac_black",
+                    "cs_frac_hisp","unemp_rate","pop_d_2000_1980","lf_d_2000_1980",
+                    "cs_labforce","cs_elf_ind_man","cs_born_foreign","mig_inflow",
+                    "mig_outflow","pop_density","frac_traveltime_lt15","hhinc00",
+                    "median_house_value","cs_educ_ba",
+                    "cs_fam_wkidsinglemom","crime_total","subcty_exp_pc",
+                    "taxrate","tax_st_diff_top20", "real_yearly_earnings_1", "real_yearly_earnings_2")
+```
+
+
+## Codebook for the CPS data
+
+Before diving into any analysis, the first step is always to get to know one's sample data. To this end, we look at the codebook and make some summary statistics on the sample. 
+
+
+| Variable name                           | Description                                    |
+|-----------------------------------------|------------------------------------------------|
+| d_earn                                  | Difference in earnings at t+1 and t            |
+| real_yearly_earnings_t                  | Earnings at year t                             |
+| male                                    | Male                                           |
+| race_white                              | Race: White                                    |
+| race_asian                              | Race: Asian                                    |
+| race_black                              | Race: Black                                    |
+| edu_num                                 | Years of Education                             |
+| experience                              | Years of Experience                            |
+| experience2                             | Years of Experience Squared                    |
+| age                                     | Age                                            |
+| age2                                    | Age Squared                                    |
+| RTIa                                    | Previous occupation: task index                |
+| task_abstract                           | Previous occupation: abstract task measure     |
+| task_manual                             | Previous occupation: manual task measure       |
+| task_routine                            | Previous occupation: routine task measure      |
+| Occupation Groups (previous occupation) |                                                |
+| occ1digit_art_sports_media              | Arts, Design, Entertainment, Sports, and Media |
+| occ1digit_building_cleaning             | Building and Grounds Cleaning and Maintenance  |
+| occ1digit_business_op                   | Business Operations Specialists                |
+| occ1digit_community                     | Community and Social Services                  |
+| occ1digit_computer_mathematica          | Computer and Mathematical                      |
+| occ1digit_construction                  | Construction                                   |
+| occ1digit_educ                          | Education, Training, and Library               |
+| occ1digit_farm_fish_forest              | Farming, Fisheries, and Forestry               |
+| occ1digit_finacial_spec                 | Financial Specialists                          |
+| occ1digit_food_serving                  | Food Preparation and Serving                   |
+| occ1digit_healthcare_supp               | Healthcare Support                             |
+| occ1digit_healthcare_tech               | Healthcare Practitioners and Technicians       |
+| occ1digit_install_maint_rep             | Installation, Maintenance, and Repair          |
+| occ1digit_life_physical_ssc             | Life, Physical, and Social Science             |
+| occ1digit_management                    | Management in Business, Science, and Arts      |
+| occ1digit_offic_admin                   | Office and Administrative Support              |
+| occ1digit_pers_care                     | Personal Care and Service                      |
+| occ1digit_production                    | Production                                     |
+| occ1digit_protective_serv               | Protective Service                             |
+| occ1digit_sales                         | Sales and Related                              |
+| occ1digit_technician                    | Technicians                                    |
+| occ1digit_transport                     | Transportation and Material Moving             |
+| Location characteristics                |                                                |
+| cty_pop2000                             | County Population in 2000                      |
+| cz_pop2000                              | Commuting Zone Population in 2000              |
+| intersects_msa                          | Urban Area                                     |
+| cs00_seg_inc                            | Income Segregation                             |
+| cs00_seg_inc_pov25                      | Segregation of Poverty (< p25)                 |
+| cs00_seg_inc_aff75                      | Segregation of Affluence (>p75)                |
+| cs_race_theil_2000                      | Racial Segregation                             |
+| gini99                                  | Gini Index Within Bottom 99%                   |
+| poor_share                              | Poverty Rate                                   |
+| inc_share_1perc                         | Top 1% Income Share                            |
+| frac_middleclass                        | Fraction Middle Class (p25-p75)                |
+| scap_ski90pcm                           | Social Capital Index                           |
+| rel_tot                                 | Percent Religious                              |
+| cs_frac_black                           | Percent Black                                  |
+| cs_frac_hisp                            | Percent Hispanic                               |
+| unemp_rate                              | Unemployment Rate in 2000                      |
+| pop_d_2000_1980                         | Percent Change in Population 1980-2000         |
+| lf_d_2000_1980                          | Percent Change in Labor Force 1980-2000        |
+| cs_labforce                             | Labor Force Participation                      |
+| cs_elf_ind_man                          | Share Working in Manufacturing                 |
+| cs_born_foreign                         | Percent Foreign Born                           |
+| mig_inflow                              | Migration Inflow Rate                          |
+| mig_outflow                             | Migration Outflow Rate                         |
+| pop_density                             | Population Density                             |
+| frac_traveltime_lt15                    | Fraction with Commute < 15 Min                 |
+| hhinc00                                 | Mean Household Income                          |
+| median_house_value                      | Median House Value                             |
+| ccd_exp_tot                             | School Expenditure per Student                 |
+| ccd_pup_tch_ratio                       | Student-Teacher Ratio                          |
+| score_r                                 | Test Score Percentile (Income Adjusted)        |
+| dropout_r                               | High School Dropout Rate (Income Adjusted)     |
+| cs_educ_ba                              | Percent College Grads                          |
+| tuition                                 | College Tuition                                |
+| gradrate_r                              | Percent College Grads                          |
+| e_rank_b                                | Absolute Mobility (Expected Rank at p25)       |
+| cs_fam_wkidsinglemom                    | Fraction of Children with Single Mother        |
+| crime_total                             | Total Crime Rate                               |
+| subcty_exp_pc                           | Local Government Expenditures                  |
+| taxrate                                 | Local Tax Rate                                 |
+| tax_st_diff_top20                       | Tax Progressivity                              |
+| region_large                            | 4 Regions                                      |
+
+## Summary Statistics for the CPS data
+The summary statistics help us get a better understanding of the numerical variables in terms of their mean,median, standard deviation, lowest and highest values as well as lower and upper quartiles.
+
+```{r summary_stats,  message=FALSE, echo = TRUE}
+# Make a data.frame containing summary statistics of interest
+cps_dfsum<-cps_df %>% dplyr::select(d_earn, real_yearly_earnings_1, real_yearly_earnings_2, where(is.numeric), -c(RTIa, occ2010, cpsidp, county, cz, metfips))
+summ_stats <- fBasics::basicStats(cps_dfsum)
+summ_stats <- as.data.frame(t(summ_stats))
+# Rename some of the columns for convenience
+summ_stats <- summ_stats[c("Mean", "Stdev", "Minimum", "1. Quartile", "Median",  "3. Quartile", "Maximum")]
+colnames(summ_stats)[colnames(summ_stats) %in% c('1. Quartile', '3. Quartile')] <- c('Lower quartile', 'Upper quartile')
+```
+
+```{r summary_stats_table, message=FALSE, echo = TRUE}
+# Pretty-printing in HTML
+summ_stats_table <- kable(summ_stats, "html", digits = 2)
+kable_styling(summ_stats_table,bootstrap_options=c("striped", "hover", "condensed", "responsive"),
+              full_width=FALSE)
+```
+
+## Transform and pre-process the data
+
+Before building a wage prediction model by training it on the CPS data, we familiarize ourselves with the CPS data and investigate it for potential outliers that could impact the robustness of our wage prediction model. An easy way to perform initial outlier analysis is to plot a histogram of the variable of interest where we put the values of the variable of interest (or bins representing a range of values) on the x-axis and the count of observations for each value, or bin of values, on the y-axis. In this case, we plot histogram of the CPS data variables of interest `d_earn`, which is the yearly difference in wages, as well as `real_yearly_earnings_1` and `real_yearly_earnings_2`, which we use to compute the yearly earnings difference `d_earn`. We then observe the histograms to identify any potential outliers that would require further investigation.  
+
+**NOTE: When performing outlier analysis, feel free to add more histogram plots for other variables you think might be important to your analysis! 
+
+Before we dive deeper into the outlier analysis, we check if any of the variables of interest have null values and perform quick statistical summaries to get a better understanding of these variables.
+
+```{r raw_data_analysis}
+# Perform statistical summaries for the variables of interest
+summary(cps_df$d_earn)
+summary(cps_df$real_yearly_earnings_1)
+summary(cps_df$real_yearly_earnings_2)
+
+# Plot the histograms for these variables
+ggplot(cps_df, aes(x=d_earn)) + 
+  geom_histogram(bins = 100)
+ggplot(cps_df, aes(x=real_yearly_earnings_1)) + 
+  geom_histogram(bins = 100)
+ggplot(cps_df, aes(x=real_yearly_earnings_2)) + 
+  geom_histogram(bins = 100)
+
+```
+                                                                                                       
+As can be seen from the histograms above, `real_yearly_earnings_1` and  `real_yearly_earnings_2` variables seem to be heavily right-skewed. We also observe that these two variables have some potentially outlier points on the very right-hand side of the histogram, so we will further investigate these two variables.
+
+## Deal with Missing Values 
+
+We begin by checking the number of missing values for our variables of interest, `d_earn`, `real_yearly_earnings_1` and `real_yearly_earnings_2`. 
+
+```{r check_null_values}
+# Check if any of the variables of interest have missing values (i.e. null values)
+sum(is.na(cps_df$d_earn))
+sum(is.na(cps_df$real_yearly_earnings_1))
+sum(is.na(cps_df$real_yearly_earnings_2))
+
+# Across table rows, only 0.18% of them have missing values 
+sum(is.na(cps_df))/nrow(cps_df)*100
+cps_df <- cps_df %>% drop_na()
+sum(is.na(cps_df))/nrow(cps_df)*100
+
+```
+
+We observe that none of the variables of interest that we will rely on heavily have any null values, so we do not need to deal with missing values for those columns. We also note that out of all values across all rows (i.e. all observations), only ~10% of them have missing values. Given that it is not a significant percent of the data, we drop these observations (i.e. ~21k out of ~193k observations). 
+
+We then proceed with checking for any zero values for `real_yearly_earnings_1` and `real_yearly_earnings_2` as we want to make sure the CPS sample matches the YU sample as closely as possible and so, individuals in the CPS data with no earning data for two consecutive years (which we call year 1 and year 2) are not relevant for building a wage prediction model for the employed YU participants. In addition, we make sure there aren't any "negative" earnings, which could have been a result of some data entry error.
+
+```{r check_zero_values}
+# Count of observations with year 1 earnings equal to $0
+sum(cps_df$real_yearly_earnings_1==0)
+# Percent of observations with year 1 earnings equal to $0
+(sum(cps_df$real_yearly_earnings_1==0) / length(cps_df$d_earn)) * 100
+# Count of observations with year 1 earnings less than $0
+sum(cps_df$real_yearly_earnings_1<0) 
+
+# Count of observations with year 2 earnings equal to $0
+sum(cps_df$real_yearly_earnings_2==0)
+# Percent of observations with year 2 earnings equal to $0
+(sum(cps_df$real_yearly_earnings_2==0) / length(cps_df$d_earn)) * 100  
+# Count of observations with year 2 earnings less than $0
+sum(cps_df$real_yearly_earnings_2<0)
+
+```
+
+After performing some initial checks, we notice that ~3.7% and ~5.0% of the year 1 earnings and year 2 earnings, respectively, have the value of \$0, but neither have values less than \$0. To ensure that there are no individuals in the CPS sample who do not have any earnings information, or who do not have any earnings information that is *relevant* for our analysis, we will proceed by filtering out these individuals from our sample.
+
+## Filter observations
+We first filter out individuals who have zero values for both `real_yearly_earnings_1` and `real_yearly_earnings_2`. As discussed above, we want to make sure the CPS sample matches the YU sample as closely as possible and so, given that our YU participants are employed, we want to make sure to filter out any CPS individuals who do not have earnings data (or simply do not earn) for two consecutive years (i.e. `real_yearly_earnings_1` and `real_yearly_earnings_2`). 
+
+Along the same lines, we decided to filter out any sample with yearly earnings less than \$100. It is possible that those earnings were inputted incorrectly-- however, even if they were inputted correctly, the participants with less than \$100 yearly earnings do not match the YU participants' earning profiles.
+
+```{r filter_lower_bound}
+# Count number of year 1 and year 2 earnings with values less than 100
+sum(cps_df$real_yearly_earnings_1 <100) 
+sum(cps_df$real_yearly_earnings_2 <100)
+
+# Filter out observations with less than $100 yearly earnings (includes observations with $0 earnings as well)
+cps_df_filtered <- cps_df[!(cps_df$real_yearly_earnings_1 < 100 | cps_df$real_yearly_earnings_2 < 100)]
+
+# Percent of observations filtered out by removing observations with less than $100 yearly earnings
+(length(cps_df$d_earn) - length(cps_df_filtered$d_earn))/ length(cps_df$d_earn) * 100  
+
+# Histogram of sample earnings, including those with earnings > $150k
+ggplot(cps_df_filtered, aes(x=d_earn)) + 
+  geom_histogram(bins = 100) 
+```
+
+We have filtered out approx 6.83% of the observations, which had real yearly earnings for either year 1 or year 2, or both, of less than \$100. 
+
+In addition, observing the statistical summary of the `d_earn` variable above (in the Transforming and pre-processing the data section), we notice that the minimum and maximum of the yearly wage changes are -\$1,331,543 and \$1,223,313 respectively. This indicates that there could be data inputting errors or that these are individuals with significantly higher earnings than the YU program participants. Because YU is a training program that targets individuals from lower socio-economic backgrounds, we will filter out individuals who earn more than $150,000 annually as they are not a good representative of the YU participant population.
+
+```{r filter_upper_bound}
+# Filter out observations with more than $150k yearly earnings
+cps_df_filtered_2 <- cps_df_filtered[cps_df_filtered$real_yearly_earnings_1 < 150000 & cps_df_filtered$real_yearly_earnings_2 < 150000]
+
+# Percent of observations filtered out with more than $150k yearly earnings
+(length(cps_df_filtered$d_earn) - length(cps_df_filtered_2$d_earn))/ length(cps_df_filtered$d_earn) * 100 
+
+# Percent of observations filtered out with more than $150k yearly earnings and less than $100 yearly earnings
+(length(cps_df$d_earn) - length(cps_df_filtered_2$d_earn))/ length(cps_df$d_earn) * 100 
+
+```
+
+Overall, we filtered out ~8.1% of the total observations due to having really low or high yearly earnings (below \$100 or above \$150,000), which could potentially be due to incorrectly inputted data-- but even if these earnings were inputted correctly, they does not match the profiles of the YU participants. 
+
+## Investigating Outliers
+
+We can now get a better insight into the potential outlier values observed in the three histograms plotted above. One of the questions that guides our investigation is:
+
+* Are these good or bad outliers? I.e. are these just participants with significantly higher yearly earnings than other participants or are these earnings a result of data inputting errors?
+
+We plot and analyze the histograms of the variables of interest again, just as we have done above.
+
+```{r outlier_analysis}
+
+# Perform a statistical summary of the filtered CPS dataset -- also good sanity check to see if the min/max values are adjusted after we filter out the observations as described above
+summary(cps_df_filtered_2$real_yearly_earnings_1)
+summary(cps_df_filtered_2$real_yearly_earnings_2)
+summary(cps_df_filtered_2$d_earn)
+
+# Histograms after filtering out observations with yearly earnings > $150k and < $100
+ggplot(cps_df_filtered_2, aes(x=d_earn)) + 
+  geom_histogram(bins = 100) 
+ggplot(cps_df_filtered_2, aes(x=real_yearly_earnings_1)) + 
+  geom_histogram(bins = 100) 
+ggplot(cps_df_filtered_2, aes(x=real_yearly_earnings_2)) + 
+  geom_histogram(bins = 100) 
+```
+
+As can be seen from the histogram above, even though we only threw out ~8% of the total observations, the range of differences in the yearly earnings shrinks significantly as we filtered out observations that had much higher values than the rest of the observations. 
+
+## Apply log transformation on wage change, the dependent variable
+We apply a log transformation on the real yearly earnings 1 and 2, `real_yearly_earnings_1` and `real_yearly_earnings_2`, such that the variable `log_d_earn` is the log ratio of the 'real_yearly_earnings_2' to 'real_yearly_earnings_1' (i.e. log_d_earn = log(real_yearly_earnings_2/real_yearly_earnings_1)). This log transformation is appropriate because it deals with the positively skewed distribution of the yearly earnings variables. Also, note that it is always good practice to add a really small delta to variables before applying a log transformation in order to prevent the log values from "exploding" and becoming NaNs in case the variables have a value of 0. So, although we have filtered out the 0 values, we will still add a delta of 0.001 to the variables `real_yearly_earnings_1` and `real_yearly_earnings_2` for good practice.
+
+```{r log_wage_change}
+
+# Applying log transformation to real_yearly_earnings_1
+cps_df_filtered_log <- cps_df_filtered_2 %>% mutate(real_yearly_earnings_1=if_else(real_yearly_earnings_1==0,0.001,real_yearly_earnings_1),
+         log_real_yearly_earnings_1=log(real_yearly_earnings_1))  # ensure real yearly earning is never 0; o.w. log(0) will give NaN values
+
+# Applying log transformation to real_yearly_earnings_2
+cps_df_filtered_log <- cps_df_filtered_log %>% mutate(real_yearly_earnings_2=if_else(real_yearly_earnings_2==0,0.001,real_yearly_earnings_2),
+         log_real_yearly_earnings_2=log(real_yearly_earnings_2)) # ensure real yearly earning is never 0; o.w. log(0) will give NaN values
+
+# Storing the difference in log yearly earnings as a new variable 'log_d_earn'
+cps_df_filtered_log <- cps_df_filtered_log %>% mutate(log_d_earn=log_real_yearly_earnings_2-log_real_yearly_earnings_1)
+
+# Percent of observations with log_d_earn == 0 
+(sum(cps_df_filtered_log$log_d_earn==0) / length(cps_df_filtered_log$log_d_earn)) * 100 
+# Percent of observations with log_real_yearly_earnings_1 == 0.001 (which is the default value we set if log_real_yearly_earnings_1 == 0)
+(sum(cps_df_filtered_log$log_real_yearly_earnings_1==0.001) / length(cps_df_filtered_log$log_d_earn)) * 100
+# Percent of observations with log_real_yearly_earnings_2 == 0.001 (which is the default value we set if log_real_yearly_earnings_2 == 0)
+(sum(cps_df_filtered_log$log_real_yearly_earnings_2==0.001) / length(cps_df_filtered_log$log_d_earn)) * 100 
+
+# Get the summary statistics for 'log_d_earn', the logged ratio of yearly earnings variable
+summary(cps_df_filtered_log$log_d_earn)
+
+# Histogram of yearly wage change after applying log transformation
+ggplot(cps_df_filtered_log, aes(x=log_d_earn)) + 
+  geom_histogram(bins = 100) 
+
+```
+
+As can be observed from the histogram and the summary statistics for 'log_d_earn', the log transformation seems reasonable in terms of both the range and distribution of values, so we proceed with building our wage prediction model.
+
+## Scale and center continuous explanatory variables 
+We initially create a dataframe with the relevant columns for our wage prediction model and if appropriate, convert variables such as region_large (which represents the region size), into categorical ones.
+
+```{r preprocess_data}
+
+# Create table with relevant columns for building a wage prediction model
+cps_df_log<- cps_df_filtered_log %>%
+  select(log_d_earn,
+         year,cpsidp,occ1digit,age,age2,sex,race_white,race_black,race_asian,
+         edu_num, experience,experience2,metfips,
+         RTIa,task_abstract,task_routine,task_manual,county,region_large,county_name,cty_pop2000,cz,cz_name,cz_pop2000,intersects_msa,
+         cs00_seg_inc,cs00_seg_inc_pov25,cs00_seg_inc_aff75,
+         cs_race_theil_2000,gini99,poor_share,inc_share_1perc,
+         frac_middleclass,rel_tot,cs_frac_black,
+         cs_frac_hisp,unemp_rate,pop_d_2000_1980,lf_d_2000_1980,
+         cs_labforce,cs_elf_ind_man,cs_born_foreign,mig_inflow,
+         mig_outflow,pop_density,frac_traveltime_lt15,hhinc00,
+         median_house_value,cs_educ_ba,
+         cs_fam_wkidsinglemom,crime_total,subcty_exp_pc,
+         taxrate,tax_st_diff_top20, log_real_yearly_earnings_1)
+
+colnames(cps_df_log)<- c("log_d_earn", 
+                         "year","cpsidp","occ1digit","age","age2","sex",
+                     "race_white","race_black","race_asian","edu_num" ,"experience","experience2",
+                     "metfips", "RTIa","task_abstract","task_routine",
+                     "task_manual","county","region_large",
+                    "county_name","cty_pop2000","cz","cz_name","cz_pop2000","intersects_msa",
+                    "cs00_seg_inc","cs00_seg_inc_pov25","cs00_seg_inc_aff75",
+                    "cs_race_theil_2000","gini99","poor_share","inc_share_1perc",
+                    "frac_middleclass","rel_tot","cs_frac_black",
+                    "cs_frac_hisp","unemp_rate","pop_d_2000_1980","lf_d_2000_1980",
+                    "cs_labforce","cs_elf_ind_man","cs_born_foreign","mig_inflow",
+                    "mig_outflow","pop_density","frac_traveltime_lt15","hhinc00",
+                    "median_house_value","cs_educ_ba",
+                    "cs_fam_wkidsinglemom","crime_total","subcty_exp_pc",
+                    "taxrate","tax_st_diff_top20", "log_real_yearly_earnings_1")
+
+# Convert the CPS table into a dataframe object
+class(cps_df_log)<-class(as.data.frame(cps_df_log))
+
+# Store variables to be converted into categorical ones
+categorical<-c("year","region_large")
+# 'lapply' applies a given function (in this case factor) to each column stored in the 'categorical' variable and converts the variable into a categorical one
+cps_df_log[ , categorical] <- lapply(cps_df_log[ ,categorical] , factor)
+
+# Store the relevant CPS data (including log wage change) for building the wage prediction model
+vars<- cps_df_log %>%
+  select(log_real_yearly_earnings_1, year,
+         age,age2,sex,race_white,race_black,race_asian,
+         edu_num, experience,experience2,
+         RTIa,task_abstract,task_routine,task_manual,region_large,
+         cty_pop2000,cs00_seg_inc,cs00_seg_inc_pov25,cs00_seg_inc_aff75,
+         cs_race_theil_2000,gini99,poor_share,inc_share_1perc,
+         frac_middleclass,rel_tot,cs_frac_black,
+         cs_frac_hisp,unemp_rate,pop_d_2000_1980,lf_d_2000_1980,
+         cs_labforce,cs_elf_ind_man,cs_born_foreign,mig_inflow,
+         mig_outflow,pop_density,frac_traveltime_lt15,hhinc00,
+         median_house_value,,cs_educ_ba,
+         cs_fam_wkidsinglemom,crime_total,subcty_exp_pc,
+         taxrate,tax_st_diff_top20)
+saveRDS(vars, file = "vars.rds")
+
+# Store the names of the variables used in the wage prediction model as they will come handy when adding new ones
+col_vars<-colnames(vars)
+control_vars=col_vars
+
+```
+
+Next, we need to split the data into a training and test data set. We do this by drawing a random sample of 80% into the training and 20% into the test dataset. The reason for this splitting is that we want to train our model on the bulk of the data and then check how well our model performs on data the model has never seen. This way we make sure that our model does not overfit (i.e. is too closely modeled on the training dataset but does not generalize well to other datasets). You can read about why 80-20 is the common train-test split standard [here](https://towardsdatascience.com/finally-why-we-use-an-80-20-split-for-training-and-test-data-plus-an-alternative-method-oh-yes-edc77e96295d).
+
+After splitting the dataset, in order to standardize our features,i.e. to center (subtract the mean) and scale (divide by standard deviation) them, we compute those parameters for standardization on the training set (i.e. means and standard deviations of features in the training set) and apply the same parameters on the continuous variables of both the training and test sets. The reason for this standardization is that machine learning algorithms (e.g. linear regression, logistic regression, etc.) use gradient descent as an optimization technique. Gradient descent uses a step size for each feature to update the model parameters (i.e. coefficients) in order to minimize a cost function, which in turn improves our model's predictive performance. Due to the presence of features X in the gradient descent formula, the values of these features affect the step size of the gradient descent. Thus, the difference in ranges of features leads to different step sizes for each feature. To ensure that the steps for gradient descent are updated at the same rate for all features and that the algorithm moves smoothly towards its convergence point (i.e. minima), we scale the dataset that we feed into our model. 
+See [https://ml-cheatsheet.readthedocs.io/en/latest/gradient_descent.html](https://ml-cheatsheet.readthedocs.io/en/latest/gradient_descent.html) for more on gradient descent. 
+
+As a final step, we convert categorical variables into dummy variables. Note that some ML models like random forests do not do well with many dummy variables, which is why here we made an effort to describe any categorical variables (occupation, locations) through continuous variables (e.g. the task index of an occupation or the population density of a region).
+
+```{r train_test_split}
+# Use train_fraction to split the dataset into training and test sets 
+train_fraction <- 0.80  
+n <- dim(cps_df_log)[1]
+
+# Set seed to ensure same training and test set used for model evaluation in different scripts
+set.seed(1234) 
+
+# Randomly select the specified fraction of indices to be included in the training set 
+train_idx <- sample.int(n, replace=F, size=floor(n*train_fraction))
+
+# Generate training sample using the 80-20 split rule
+cps_df_log_train <- as.data.frame(cps_df_log[train_idx,])
+cps_df_log_test <- as.data.frame(cps_df_log[-train_idx,])
+
+# Store the clean CPS (with log wage change) training and test sets without standardization
+cps_df_log_train_unscaled <- cps_df_log_train
+cps_df_log_test_unscaled <- cps_df_log_test
+
+# Save the unscaled training and test sets as we will need them to build wage prediction model for subgroups in a different tutorial
+saveRDS(cps_df_log_train_unscaled, file = "cps_df_log_train_unscaled.rds")
+saveRDS(cps_df_log_test_unscaled, file = "cps_df_log_test_unscaled.rds")
+
+# Select continuous variables to be scaled
+cont<-vars %>%select(-c(year, 
+                        region_large, sex, race_white,race_black,
+                        race_asian))
+cont<-c(colnames(cont))
+
+# Compute parameters for standardization on training set 
+pre_proc_val <- preProcess(cps_df_log_train[,cont], method = c("center", "scale"))
+
+# Save the continuous variables' names (will be used to standardize the YU continous variables)
+saveRDS(cont, file = "cont.rds")
+# Save the standardization parameters as we will also apply them on the YU data 
+saveRDS(pre_proc_val, file = "pre_proc_val.rds")
+
+# Standardize the continuous variables of the training and test sets by applying the 'pre_proc_val' parameters above
+cps_df_log_train[,cont] = predict(pre_proc_val, cps_df_log_train[,cont])
+cps_df_log_test[,cont] = predict(pre_proc_val, cps_df_log_test[,cont])
+
+# Ensure CPS data is stored as a dataframe object
+class(cps_df_log)<-class(as.data.frame(cps_df_log))
+
+# Make dummy variables for variables of both training and test sets (scaled and unscaled versions)
+cols_reg = c(control_vars,'log_d_earn')
+dummies <- dummyVars(log_d_earn ~ ., data = cps_df_log[,cols_reg])
+
+cps_log_train_dummies = predict(dummies, newdata = cps_df_log_train[,cols_reg])
+cps_log_test_dummies = predict(dummies, newdata = cps_df_log_test[,cols_reg])
+
+cps_log_train_dummies_unscaled = predict(dummies, newdata = cps_df_log_train_unscaled[,cols_reg])
+cps_log_test_dummies_unscaled = predict(dummies, newdata = cps_df_log_test_unscaled[,cols_reg])
+
+# Save the scaled training and test sets dummies as we will need them to perform calibration analysis in a different tutorial
+saveRDS(cps_log_train_dummies, file = "cps_log_train_dummies.rds")
+saveRDS(cps_log_test_dummies, file = "cps_log_test_dummies.rds")
+
+# Save the unscaled training and test sets dummies as we will need them to build wage prediction model for subgroups in a different tutorial
+saveRDS(cps_log_train_dummies_unscaled, file = "cps_log_train_dummies_unscaled.rds")
+saveRDS(cps_log_test_dummies_unscaled, file = "cps_log_test_dummies_unscaled.rds")
+
+cols<-colnames(cps_log_train_dummies)
+
+# Save column names to be used in a different tutorial to ensure columns are in the same order across the CPS and YU datasets
+saveRDS(cols, file = "cols.rds")
+
+```
+
+# Building Wage Prediction Models 
+
+Having pre-processed the dataset, we are now ready to build the wage prediction models using different machine learning algorithms. We have built 4 baseline models to predict wage changes: linear, ridge, lasso, and random forest.
+
+**Exercise: You might consider building other types of models, using more sophisticated approaches to pick the input features for the models, and/or using similar techniques to what you have done in your individual ML assignment in order to fine-tune the model parameters.** 
+
+The reason why we build predictive models is because this is a prediction not estimation task.We are not specifically interested in interpreting the coefficients of each input feature we use in the model or in seeing what happens if we hold one feature fixed vs. changing other features. Thus, our goal is to purely get good "out-of-sample" predictions (i.e. predict well the yearly wage changes of YU participants had they not attended the training program).
+
+We first define two functions that we will use for evaluating the model performance. The first one will be used for the regression models and the second one will be used for the random forest model. To compare the performance of different models, we compute the $R^2$ and  RMSE of these models. 
+
+As a reminder, $R^2$ (the coefficient of determination) is a statistical measure of goodness of fit of a model. Because our goal is prediction, $R^2$ is an appropriate metric to use for measuring the model performance by measuring the goodness of fit of the model on the test set. The $R^2$ measures the how much of the variation around the mean in the data our model explains or in other words how well the regression predictions approximate the true data points; i.e. an  $R^2$ of 1 would indicate that the regression predictions perfectly fit the data. The formula for calculating the $R^2$ is:
+
+$R^2 = \frac{SS_{regression}}{SS_{total}} = 1 - \frac{SS_{error}}{SS_{total}}$
+where:
+* $SS_{regression}$ is the "regression sum of squares" and quantifies how far the estimated sloped regression line, $\hat{y_i}$, is from the horizontal "no relationship line", which is simply the sample mean denoted by $\bar{y}$.
+* $SS_{total}$ is the "total sum of squares" and quantifies how much the data points, $y_i$, vary around their sample mean, $\bar{y}$.
+* $SS_{error}$ is the "error sum of squares" and quantifies how much the data points, $y_i$, vary around the estimated regression line denoted by $\hat{y_i}$. 
+
+You can think of SSR as a measure of the explained variability by the regression line and of SST as the measure of the total variability of the dataset.
+
+Mathematically,
+$SSR = \Sigma_{i=1}^n(\hat{y_i} - \bar{y})^2$
+$SSE = \Sigma_{i=1}^n(y_i - \hat{y_i})^2$
+$SST = \Sigma_{i=1}^n(y_i - \bar{y})^2$.
+
+In the extreme cases:
+* If $R^2$ = 1, all of the data points fall perfectly on the regression line. This implies that the independent variables (or the input features) $x_i$ account for all of the variation in the dependent variable $y$.
+* If $R^2$ = 0, the estimated regression line is perfectly horizontal. This implies that the independent variables do not account for any of the variation in the dependent variable $y$.
+
+Also, it is worth noting that $R^2$ is negative only when the chosen model does not follow the trend of the data, so fits worse than a horizontal line.
+
+It is worth noting that the $R^2$ automatically increases with each covariate you add to a regression model, which is why sometimes it it more appropriately to look at the "adjusted $R^2$", which adjust for the number of covariates added to the model. In our case, we use the same number of variables across all the models we want to compare, which is why the normal $R^2$ is an appropriate measure. 
+
+We also define the Mean Squared Error (MSE), which is the sample average of squared errors: 
+$MSE= \Sigma_{i=1}^n\frac{(\hat{y_i}-{y_i})^2}{n}$, where $\hat{y_i}$ are the predicted values, $y_i$ are the observed values, and n is the total number of observations. In addition, RMSE (Root Mean Square Error) is the standard deviation of the residuals (or the prediction errors), i.e. the square root of the MSE. 
+$RMSE = \sqrt{\Sigma_{i=1}^n\frac{(\hat{y_i}-{y_i})^2}{n}}$ . The RMSE measures how far from the regression line the data points are. I.e. RMSE tells us how concentrated the data points are around the line of best fit of our regression models. The RMSE has the same unit as the outcome variable Y. 
+
+Additionally, we can add an uncertainty measure around the MSE/RMSE for when we evaluate the model on the test set. For which we can compute the standard error on the MSE in the test set. Standard errors are defined as: $Stderr= sd(\hat{y_i}-{y_i})^2)/\sqrt(n)$. The confidence intervals around the MSE are then given by $MSE +/- 1.96*Stderr$. This tells us how  noisy our estimate is of the goodness of fit of our particular model in our test set, due to the sampling variation in the test set. 
+
+```{r eval_results}
+
+# Function to evaluate model performance for regression models
+eval_results <- function(true, predicted, df) {
+  # Use the definitions of R^2 and RMSE to compute these metrics
+  SSE <- sum((true-predicted)^2) 
+  SST <- sum((true - mean(true))^2)
+  R_square <- 1 - SSE / SST
+  RMSE = sqrt(SSE/nrow(df))
+  SE = (true-predicted)^2
+  MSE=SSE/nrow(df)
+  std.d_SE= sd(SE)
+  std.err_MSE=std.d_SE /sqrt(nrow(df))
+  CI_MSE_high= MSE+1.96*std.err_MSE
+  CI_MSE_low=   MSE-1.96*std.err_MSE
+  # Model performance metrics
+  metricsdf<<-data.frame(
+    MSE=MSE,
+    RMSE = RMSE,
+    Rsquare = R_square
+  )
+  data.frame(
+     MSE=MSE,
+    RMSE = RMSE,
+    Rsquare = R_square
+  )
+  
+}
+eval_results_test <- function(true, predicted, df) {
+  # Use the definitions of R^2 and RMSE to compute these metrics
+  # for test set evaluation we also add the std error and confidence intervals around the MSE
+  SSE <- sum((true-predicted)^2) 
+  SST <- sum((true - mean(true))^2)
+  R_square <- 1 - SSE / SST
+  RMSE = sqrt(SSE/nrow(df))
+  SE = (true-predicted)^2
+  MSE=SSE/nrow(df)
+  std.d_SE= sd(SE)
+  std.err_MSE=std.d_SE /sqrt(nrow(df))
+  CI_MSE_high= MSE+1.96*std.err_MSE
+  CI_MSE_low=   MSE-1.96*std.err_MSE
+  # Model performance metrics
+  metricsdf<<-data.frame(
+    MSE=MSE,
+    std.err_MSE=std.err_MSE,
+    CI_MSE_high=CI_MSE_high,
+    CI_MSE_low=CI_MSE_low,
+    RMSE = RMSE,
+    Rsquare = R_square
+  )
+  data.frame(
+     MSE=MSE,
+    std.err_MSE=std.err_MSE,
+    CI_MSE_high=CI_MSE_high,
+    CI_MSE_low=CI_MSE_low,
+    RMSE = RMSE,
+    Rsquare = R_square
+  )
+  
+}
+
+# Function to evaluate model performance for regression models
+eval_results_rf <- function(model, df, var="log_d_earn") {
+  # Use the definitons of R^2 and RMSE to compute these metrics
+  true <- df[, var]
+  predicted <- predict(model, df)$predictions
+  SSE <- sum((predicted - true)^2, na.rm=T)
+  SST <- sum((true - mean(true, na.rm=T))^2, 
+             na.rm=T)
+  R_square <- 1 - SSE / SST
+  RMSE = sqrt(SSE/nrow(df))
+ SE = (true-predicted)^2
+  MSE=SSE/nrow(df)
+  # Model performance metrics
+  data.frame(
+    MSE=MSE,
+    RMSE = RMSE,
+    Rsquare = R_square
+  )
+}
+
+
+eval_results_rf_test <- function(model, df, var="log_d_earn") {
+  # Use the definitons of R^2 and RMSE to compute these metrics
+  true <- df[, var]
+  predicted <- predict(model, df)$predictions
+  SSE <- sum((predicted - true)^2, na.rm=T)
+  SST <- sum((true - mean(true, na.rm=T))^2, 
+             na.rm=T)
+  R_square <- 1 - SSE / SST
+  RMSE = sqrt(SSE/nrow(df))
+ SE = (true-predicted)^2
+  MSE=SSE/nrow(df)
+  std.d_SE= sd(SE)
+  std.err_MSE=std.d_SE /sqrt(nrow(df))
+  CI_MSE_high= MSE+1.96*std.err_MSE
+  CI_MSE_low=   MSE-1.96*std.err_MSE
+  # Model performance metrics
+  data.frame(
+    MSE=MSE,
+    std.err_MSE=std.err_MSE,
+    CI_MSE_high=CI_MSE_high,
+    CI_MSE_low=CI_MSE_low,
+    RMSE = RMSE,
+    Rsquare = R_square
+  )
+}
+
+```
+
+## Linear Model 
+
+We start by building a simple linear model where the y variable is the log in wage change, log_d_earn. We then evaluate the linear model performance by performing predictions on the test set and computing the RMSE and $R^2$ metrics. This also allows us to compare the linear model with other models we will be building in the next steps. 
+
+```{r linear_model}
+
+# Create the dependent variable 'log_d_earn'
+y_train <- cps_df_log_train$log_d_earn
+y_test <- cps_df_log_test$log_d_earn
+
+# Create a training set dataframe as an input to the linear model
+train_lm<-as.data.frame(cbind(cps_log_train_dummies, y_train))
+colnames(train_lm)<-c(colnames(cps_log_train_dummies),"log_d_earn")
+
+# Create a test set dataframe to be used after building the linear model for performance evaluation
+test_lm<-as.data.frame(cbind(cps_log_test_dummies, y_test))
+colnames(test_lm)<-c(colnames(cps_log_test_dummies),"log_d_earn")
+
+# Create a formula from a string; i.e. "y~ x1 + x2 + x3" where y=log_d_earn and X=cps_log_train_dummies
+lm1<-as.formula(
+  paste("log_d_earn", paste(colnames(cps_log_train_dummies), collapse = " + "), sep = " ~ "))
+
+# Build a linear model for wage predictions
+model1<-lm(lm1, data = train_lm)
+
+# Get the summary statistics for this linear model
+summary(model1)
+
+# Save the linear model to be used in a different tutorial for predicting on YU data
+save(model1, file = "lm_reg_cps.rda")
+
+```
+
+
+```{r lm_preds}
+
+# Predict and evaluate on training set
+lm_predictions_train <- predict(model1, newx = train_lm)
+eval_results(y_train, lm_predictions_train, cps_df_log_train)
+
+# Predict and evaluate on test set
+lm_predictions_test <- predict(model1, newx = test_lm)
+eval_results_test(y_test, lm_predictions_test, cps_df_log_test)
+
+```
+As can be seen from the $R^2$ above, even though the model performs well on the training set, it performs very poorly on the test set, which means that the model is not very robust and also it overfits the training set. Due to this, we will build other models that will potentially perform better on the test set. 
+
+Note that for the dummy variables, R automatically assigns NA as a coefficient to the baseline dummy variable when running a regression. This NA indicates that the variable in question (i.e. `region_large.4`) is linearly related to the other variables (in this case, `region_large.1`,  `region_large.2`, and  `region_large.3`). Thus, the regression would not have a unique solution without dropping one of these variables (in this case, `regression_large.4`). Also, note that these NA values do not have any effect on the computations of other coefficients.
+
+**Exercise: We have added a baseline linear model, but have not dealt with collinearity and model regularization. As an exercise, what kind of checks might you perform to assess the model's poor performance?**
+
+## Ridge Model
+
+As we have already discussed in the lecture, ridge regression models penalize the sum of squared coefficients and prevent over-fitting by regularizing the model coefficients. Due to this, we build a ridge model for wage change prediction and perform cross-validation to find the optimal lambda (or regularization parameter).
+
+```{r ridge_model}
+
+# Create the dependent variable 'log_d_earn'
+y_train = cps_df_log_train$log_d_earn
+y_test = cps_df_log_test$log_d_earn
+
+# Ridge regression model requires the independent variables to be matrix objects 
+x = as.matrix(cps_log_train_dummies)
+x_test = as.matrix(cps_log_test_dummies)
+
+# Initialize lambdas in range [10^2,10^-3] by incrementing the sequence by 10^(-0.1) 
+lambdas <- 10^seq(2, -3, by = -.1)
+
+# Setting alpha = 0 implements ridge regression
+ridge_reg_cps = glmnet(x, y_train, nlambda = 25, alpha = 0, lambda = lambdas, standardize=TRUE)
+
+# Save ridge model to be used in a different tutorial for YU predictions
+save(ridge_reg_cps, file = "ridge_reg_cps.rda")
+
+# Perform cross-validation to obtain the optimal lambda
+cv_ridge <- cv.glmnet(x, y_train, alpha = 0, lambda = lambdas)
+
+# Extract optimal lambda for ridge model
+optimal_lambda <- cv_ridge$lambda.min
+optimal_lambda
+
+```
+
+We note that the optimal lambda for our ridge model is 0.001, so we use that lambda parameter when evaluating our model on the test set. We now compute the RMSE and $R^2$ of this ridge model. 
+
+```{r ridge_preds}
+
+# Predict and evaluate on training set
+ridge_predictions_train <- predict(ridge_reg_cps, s = optimal_lambda, newx = x)
+eval_results(y_train, ridge_predictions_train, cps_df_log_train)
+
+# Predict and evaluate on test set
+cps_df_log_test$ridge_predictions_test <- predict(ridge_reg_cps, s = optimal_lambda, newx = x_test)
+eval_results_test(y_test, cps_df_log_test$ridge_predictions_test, cps_df_log_test)
+
+```
+
+As we can observe from the $R^2$ and RMSE metrics above, the ridge model performs well on both the training and test sets, which could be explained by the regularization imposed on the coefficients of the regression that makes the model more robust and prevents it from over-fitting. The standard errors and confidence interval around the MSE on the test set tells us how noisy our MSE estimate is, given the sampling variation on the test set. Ideally we would like to get a measure of the MSE on an infinitely large test set. In the absence of that, we include this confidence interval to account for the fact that there is sampling variation. With MSE equal to 0.351, the confidence interval CI_MSE_high and CI_MSE_low
+tells us that the true estimation of the MSE lies somewhere between 0.363 and 0.340 with 95% confidence i.e. if we re-did the analysis 100 times on different test-sets, the MSE would fall in that confidence interval  95 times. 
+
+We will continue with building the lasso and random forest models and compare the performance of those models with the ridge one.
+
+## Lasso Model 
+Similar to the ridge models, lasso models also penalize the coefficients of the regression, but unlike ridge, the lasso models penalize the absolute value of the coefficients. We now build a lasso model for wage change prediction and perform cross-validation to find the optimal lambda (or regularization parameter).
+
+```{r lasso_model}
+
+# Create the dependent variable 'log_d_earn'
+y_train = cps_df_log_train$log_d_earn
+y_test = cps_df_log_test$log_d_earn
+
+# Ridge regression model requires the independent variables to be matrix objects 
+x = as.matrix(cps_log_train_dummies)
+x_test = as.matrix(cps_log_test_dummies)
+
+# Initialize lambdas in range [10^2,10^-3] by incrementing the sequence by 10^(-0.1) 
+lambdas <- 10^seq(2, -3, by = -.1)
+
+# Setting alpha = 1 implements lasso regression
+lasso_reg_cps <- glmnet(x, y_train, alpha = 1, lambda = optimal_lambda, standardize = TRUE)
+
+# Save lasso model to to be used in a different tutorial for YU predictions
+save(lasso_reg_cps, file = "lasso_reg_cps.rda")
+
+# Perform cross-validation to obtain the optimal lambda
+cv_lasso <- cv.glmnet(x, y_train, alpha = 1, lambda = lambdas, standardize = TRUE, nfolds = 5)
+
+# Extract optimal lambda for lasso model
+optimal_lambda <- cv_lasso$lambda.min
+optimal_lambda
+
+# Save optimal lambda to be used in a different tutorial for YU predictions
+save(optimal_lambda, file = "lasso_opt_lambda.rda")
+
+``` 
+
+We note that the optimal lambda for our lasso model is also 0.001, so we use that lambda parameter when evaluating our model on the test set. We now compute the RMSE and $R^2$ of this lasso model.
+
+```{r lasso_preds}
+
+# Predict and evaluate on training set
+lasso_predictions_train <- predict(lasso_reg_cps, s = optimal_lambda, newx = x)
+eval_results(y_train, lasso_predictions_train, cps_df_log_train)
+
+# Predict and evaluate on test set
+cps_df_log_test$lasso_predictions_test <- predict(lasso_reg_cps, s = optimal_lambda, newx = x_test)
+eval_results(y_test, cps_df_log_test$lasso_predictions_test, cps_df_log_test)
+lasso_metrics<-eval_results(y_test, cps_df_log_test$ridge_predictions_test, cps_df_log_test)
+
+# Save the CPS train and test sets along with the lasso model predictions for each observation
+saveRDS(cps_df_log_train, file="cps_df_log_train.rds")
+saveRDS(cps_df_log_test, file="cps_df_log_test.rds")
+
+```
+
+As can be observed from the $R^2$ and RMSE metrics above, the lasso model performs slightly worse than the ridge model; however, it still performs comparably well on both the training and test sets, which could also be explained by the regularization imposed on the coefficients of the regression. We will now build our last model, the random forest.
+
+## Comparing two models
+
+Next, we want to find out whether the performance of the ridge and lasso model is actually statistically different, i.e. whether the difference in two mean squared errors from both models is statistically different from zero. Our estimate of $MSE_{test}(\hat{y})_{lasso}$ - $MSE_{test}(\hat{y})_{ridge}$. We can define the difference in the Squared errors between the two models as needs to account for the fact that the same data is used in both estimates: $SE_diff =  (Y_i – \hat\mu_1(X_i))^2 - (Y_i – \hat\mu_2(X_i))^2 $
+
+Computing standard errors on the difference in squared errors between the two models, we can test the hypothesis that SE_diff = 0. 
+
+
+```{r compare_twomodels}
+
+#Our estimate of MSE_test(\hat\mu_1) - MSE_test(\hat\mu_2) needs to account for the fact that the same data is used in both estimates.  We can define SE_diff =  (Y_i – \hat\mu_1(X_i))^2 - (Y_i – \hat\mu_2(X_i))^2
+#If we want to test the hypothesis that these are different, we can construct the standard deviation of SE_diff and the associated standard error SE_diff/sqrt(n_test)
+
+SE_diff= (cps_df_log_test$log_d_earn-cps_df_log_test$lasso_predictions_test)^2  -(cps_df_log_test$log_d_earn-cps_df_log_test$ridge_predictions_test)^2 
+mean_SE_diff=mean(SE_diff)
+std_SE_diff=sd(SE_diff)
+std_err_SE_diff=std_SE_diff/ sqrt((nrow(cps_df_log_test)))
+CI_SE_diff_high= mean_SE_diff+1.96*std_err_SE_diff
+CI_SE_diff_low=mean_SE_diff-1.96*std_err_SE_diff
+
+mean_SE_diff
+std_err_SE_diff
+CI_SE_diff_high
+CI_SE_diff_low
+```
+
+As we can see the mean of the difference of squared errors between the two models is 0.0003653838, 
+the standard error is 0.0001000528 and therefore the confidence interval is 0.0005614873 to  0.0001692803. Since the confidence interval does not include 0 (the numbers do not go from positive to negative),  we can reject the hypothesis that the difference is zero and therefore say that the MSE in the lasso is statistically larger than the MSE of the ridge model. 
+
+
+## Random Forest
+Finally, we build a random forest regression model. 
+
+Random Forest (RF) is a Supervised Learning algorithm that is based on the ensemble learning method and many Decision Trees. An ensemble learning model, such as Random Forest, consists of many base models, which are used to make the final model predictions more accurate than those of any individual base model. Furthermore, in RF models, all computations are performed in parallel and the Decision Tree models do not interact with each other while they are being built. To build these separate Decision Tree models, RF uses a unique subset of the initial data for every base model, which helps make the Decision Tree models (and thus, their predictions) less correlated. In addition, the RF model uses a random set of features to split each node in every Decision Tree. Hence, none of the Decision Tree models see the entire training data, which allows RF models to capture the general patterns of the data better and reduce the model sensitivity to noise. Thus, RF models reduce overfitting by using a subset of features and performing feature randomization for each Decision Tree.
+
+```{r rf_model}
+
+# Create the dependent variable 'log_d_earn'
+y_train = cps_df_log_train$log_d_earn
+y_test = cps_df_log_test$log_d_earn
+
+# Create a training set dataframe as an input to the random forest model
+train_rf <- as.data.frame(cbind(cps_log_train_dummies, y_train))
+colnames(train_rf)<-c(colnames(cps_log_train_dummies),"log_d_earn")
+
+# Create a test set dataframe to be used after building the random forest model for performance evaluation
+test_rf<-as.data.frame(cbind(cps_log_test_dummies, y_test))
+colnames(test_rf)<-c(colnames(cps_log_test_dummies),"log_d_earn")
+
+# Create a formula from a string; i.e. "y~ x1 + x2 + x3" where y=y_train and X=cps_log_train_dummies
+sumx <- paste(colnames(cps_log_train_dummies), collapse = " + ")
+form <- paste("y_train",sumx, sep=" ~ ")
+form <- as.formula(form)
+
+# Build a random forest model for wage predictions
+rf_cps <- ranger(form, data = train_rf, importance = 'permutation')
+
+# Save the RF model 
+save(rf_cps, file = "rf_cps.rda")
+
+```
+
+We then evaluate the random forest model performance on on both the training set and test set and computing the RMSE and $R^2$ metrics. 
+
+```{r rf_preds}
+
+# Prediction and evaluation on training set 
+eval_results_rf(rf_cps, train_rf)
+
+# Prediction and evaluation on test set 
+eval_results_rf(rf_cps, test_rf)
+
+``` 
+
+As can be observed from the $R^2$ and RMSE metrics above, the random forest model performs significantly better on the training set than any of the other models; however, it performs significantly worse on its test set, and actually, it does not perform as well as the ridge and lasso models on the test set either. This indicates that the RF model overfits on the training set, but does not generalize well to data points outside of the training set (in this case, the test set).
+
+**Exercise: Now that we have guided you through the steps of building a baseline wage change prediction model using 4 different ML algorithms, you can try building your own model using a different ML algorithm or improve upon the models we have provided you with.** 
+
+# Calibration Analysis for Wage Prediction Models 
+We now perform calibration analysis of the predictions obtained from the lasso, ridge, and random forest regression models.Calibration analysis involves comparing the actual output and the expected output given by a model. 
+
+## Overall Model Calibration 
+We begin by performing an overall model calibration analysis to test the robustness of our model. To do so, we plot the actual log yearly wage changes against the predicted log yearly wage changes using the CPS test data. If the plotted line has a slope of 1 then the model is perfectly calibrated; i.e. the model predictions are identical to the actual values. 
+
+### Ridge
+We then compare the plotted line of predicted against actual values with the regression line with slope=1 and intercept=0, which represents a hypothetical, perfectly calibrated line.
+
+```{r ridge_calibration}
+
+# Plot the ridge regression model line along with a line for a hypothetical, perfectly calibrated model 
+ggplot(cps_df_log_test, aes(x = ridge_predictions_test, y = log_d_earn)) +
+  geom_point() + geom_smooth(method = lm)+ geom_abline(slope=1, intercept = 0) +
+  xlab("predicted log earn changes, CPS Test") +
+  ylab("actual log earn changes , CPS Test") +
+  coord_fixed()+
+  theme_minimal()
+
+# Run a calibration regression to obtain the slope of the regression model line plotted
+summary(lm(log_d_earn~ ridge_predictions_test, data=cps_df_log_test))
+
+```
+
+The plot above allows us to compare the line of a hypothetical, perfectly-calibrated model (black line) with the line of our ridge wage prediction model (blue line). Using the plot, we can see that the ridge model slope is very close to that of the perfectly calibrated model (as observed by the positioning of the lines as well), which implies that the actual and predicted log yearly earning changes for the ridge model are very similar to each other and thus, the ridge model is  well calibrated overall. It can sometimes be hard to see exactly how well the model is calibrated from such a scatterplot, especially if the 45 degree line is missing or when the x and y axis do not have the same scale (as we force the plot to have, here). We therefore also add the regression output that gives the slope of the blue line, i.e. a regression of actual on predicted values. We see that the coefficient is very close to 1, confirming that the model is indeed close to perfectly calibrated.
+
+Since the model does not suffer from non-trivial over- or under-prediction, it would be a good candidate for the wage prediction model.
+
+
+Another way of visually inspecting how well the model is calibrated, especially when there are many datapoints and the scatterplot just gives a large cloud from which it is hard to see anything, is to bin the data. In the plot below, we bin the predicted values into deciles, which means we sort all predicted values and put them into 10 equally sized buckets. We then get the mean of the actual value in each decile. Ideally, one would want to have a perfectly straight line of dots. As we can see that is almost the case here, except for the last decile: It looks like our model is slightly under-estimating the highest earning changes. This is good to keep in mind for the analysis later, should we pick this as our main model. If we were to make conclusions about the highest earning changes from our analysis, we would want to remember this plot and adjust our conclusion accordingly. 
+
+```{r ridgecalibration_ntiles}
+
+num_tiles <- 10  
+cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$ridge_predictions_test, n=num_tiles))
+cps_df_log_test_grouped <- cps_df_log_test %>% 
+  group_by(ntile) %>% 
+  summarise(mean = mean(log_d_earn),
+            std = sd(log_d_earn), 
+            std_err=std/sqrt(dim(cps_df_log_test)[1]))
+  ggplot(cps_df_log_test_grouped) +
+  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                  size = 0.5,
+                  position = position_dodge(width = .5)) +
+  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                width = 0.4,
+                size = 0.75,
+                position = position_dodge(width = .5)) +
+  theme_linedraw() +
+  labs(x = "Deciles of predicted earning changes", y = "Mean actual changes in log earnings within deciles", title = "Calibration plot using deciles for better visibility")
+  
+```
+
+### Lasso 
+We then perform the same calibration analysis on the lasso model.
+
+```{r lasso_calibration}
+
+# Plot the lasso regression model line along with a line for a hypothetical, perfectly calibrated model 
+ggplot(cps_df_log_test, aes(x = lasso_predictions_test, y = log_d_earn)) +
+  geom_point() + geom_smooth(method = lm)+ geom_abline(slope=1, intercept = 0) +
+  xlab("predicted log earn changes, CPS Test") +
+  ylab("actual log earn changes , CPS Test") +
+  coord_fixed()+
+  theme_minimal()
+
+# Run a calibration regression to obtain the slope of the regression model line plotted
+summary(lm(log_d_earn~ lasso_predictions_test, data=cps_df_log_test))
+
+```
+
+Observing the calibration plot again, we can see that the lasso model is also well calibrated overall and would be a good candidate for the wage prediction model. Using the plot, we can see that the lasso model slope is also close to that of the perfectly calibrated model (as observed by the positioning of the lines as well), which implies that the actual and predicted log yearly earning changes for the lasso model are  similar to each other. However, if we observe the plot closely, we can see that the slope of the lasso model is bigger than 1 whereas that of the ridge model is closer to 1. The regression results from the linear model of actual on predicted values confirms this. Thus, even though the lasso model is also well calibrated overall, the ridge model seems a marginally better candidate for the wage prediction model.
+
+We also redo the exercise of binning the data data into deciles. This plot looks quite similar to the Ridge model version. 
+
+```{r lassocalibration_ntiles}
+
+num_tiles <- 10 
+cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$lasso_predictions_test, n=num_tiles))
+cps_df_log_test_grouped <- cps_df_log_test %>% 
+  group_by(ntile) %>% 
+  summarise(mean = mean(log_d_earn),
+            std = sd(log_d_earn), 
+            std_err=std/sqrt(dim(cps_df_log_test)[1]))
+  ggplot(cps_df_log_test_grouped) +
+  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                  size = 0.5,
+                  position = position_dodge(width = .5)) +
+  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                width = 0.4,
+                size = 0.75,
+                position = position_dodge(width = .5)) +
+  theme_linedraw() +
+  labs(x = "Deciles of predicted earning changes", y = "Mean actual earning changes within deciles", title = "Calibration plot using deciles for better visibility")
+  
+  
+```
+
+
+
+### Random Forest 
+
+```{r rf_calibration}
+
+# Predict on the test set using the random forest model
+log_d_earn_pred <- predict(rf_cps, data=test_lm)
+test_lm <- test_lm %>% mutate(log_d_earn_pred=log_d_earn_pred$predictions)
+
+ggplot(as.data.frame(test_lm), aes(x = log_d_earn_pred, y = log_d_earn)) +
+  geom_point() + geom_smooth(method = lm)+ geom_abline(slope=1, intercept = 0) +
+  xlab("predicted log earn changes on test") +
+  ylab("actual log earn changes YU on test") +
+  coord_fixed()+
+  theme_minimal()
+
+# Run a calibration regression to obtain the slope of the random forest line plotted
+summary(lm(log_d_earn~ log_d_earn_pred, data=test_lm))
+
+```
+
+Observing the calibration plot for the random forest model, we can see that this model is poorly calibrated and would not be as good of a candidate for the wage prediction model as either the ridge or lasso models. The slope of the random forest line is steeper than that of the perfectly calibrated model (as observed by the positioning of the lines as well), which implies that the random forest model under-predicts the actual log yearly earning changes at lower values and over-predicts the actual log yearly earning changes at higher values. The regression result (coefficient of 1.23) confirms this. 
+Thus, the random forest model would not be a good candidate for the wage prediction model.
+
+While the decile plot below looks quite similar to previous models - the dots build less of a straight line than in previous versions. 
+
+**Exercise: Deciles may not be a large enough number of bins. Increase the number of bins (e.g. to 20, 50 or 100) for all of these plots and see whether they give you better visual evidence on the goodness of the calibrations. ** 
+
+```{r rfcalibration_ntiles}
+
+num_tiles <- 10  
+test_lm$ntile <- factor(ntile(test_lm$log_d_earn_pred, n=num_tiles))
+test_lm_grouped <- test_lm %>% 
+  group_by(ntile) %>% 
+  summarise(mean = mean(log_d_earn),
+            std = sd(log_d_earn), 
+            std_err=std/sqrt(dim(test_lm)[1]))
+  ggplot(test_lm_grouped) +
+  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                  size = 0.5,
+                  position = position_dodge(width = .5)) +
+  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                width = 0.4,
+                size = 0.75,
+                position = position_dodge(width = .5)) +
+  theme_linedraw() +
+  labs(x = "Deciles of predicted earning changes", y = "Mean actual earning changes within deciles", title = "Calibration plot using deciles for better visibility")
+  
+  
+```
+
+
+## Model Calibration by Subgroups
+Having performed an overall model calibration analysis, we will perform the same analysis for different subgroups. We want to make sure that the model is robust and well calibrated not just across all observations but also across different subgroups of observations. Because the lasso and ridge models have performed better than the random forest model, we will use only the former two to perform the calibration by subgroups analysis. 
+
+## Calibration By Gender 
+We perform calibration analysis by using gender to create subgroups. 
+
+### Ridge 
+
+```{r ridge_calib_gender}
+
+# Plot the ridge regression model line using gender as a subgroup along with a line for a hypothetical, perfectly calibrated model 
+ggplot(cps_df_log_test, aes(x = ridge_predictions_test, y = log_d_earn, fill=factor(sex))) +
+  geom_point(aes(fill=factor(sex)),colour="transparent",shape=21) +
+  stat_smooth(aes(colour=factor(sex)),method="lm",se = FALSE) + 
+  geom_abline(slope=1, intercept = 0) +
+  xlab("predicted log earn changes, CPS Test by Gender") +
+  ylab("actual log earn changes , CPS Test by Gender") +
+  theme_minimal()
+```
+```{r ridge_calib_male}
+# Run a calibration regression for male observations to obtain the slope of the regression model line plotted
+summary(lm(log_d_earn~ ridge_predictions_test, data=subset(cps_df_log_test, sex==1))) # sex==1 is male
+```
+
+```{r ridge_calib_female}
+# Run a calibration regression for female observations to obtain the slope of the regression model line plotted
+summary(lm(log_d_earn~ ridge_predictions_test, data=subset(cps_df_log_test, sex==0))) # sex==0 is female
+```
+The plot above allows us to compare the line of a hypothetical, perfectly-calibrated model (black line) with the lines of our ridge wage prediction model for male observations (blue line) and for female observations (pink line). Using the plot, we can see that the ridge model slope for female observations is very close to that of the perfectly calibrated model (as observed by the positioning of the lines as well), which implies that the actual and predicted log yearly earning changes of the ridge model for female observations are very similar to each other. 
+
+On the other hand, for male observations, the slope of the ridge regression line is slightly steeper than that of the perfectly calibrated model, which implies that the ridge model slightly under-predicts the actual log yearly earning changes at lower values and slightly over-predicts the actual log yearly earning changes at higher values. However, the difference are very slight. The regression output for calibration regression on the two models separately also coroborate our above observations
+
+
+**Exercise: Please plot the calibration decile plots for the subgroup of male and females separately and inspect what they tell you.** 
+
+### Lasso 
+```{r lasso_calib_gender}
+
+ggplot(cps_df_log_test, aes(x = lasso_predictions_test, y = log_d_earn, fill=factor(sex))) +
+  geom_point(aes(fill=factor(sex)),colour="transparent",shape=21) +
+  stat_smooth(aes(colour=factor(sex)),method="lm",se = FALSE) + 
+  geom_abline(slope=1, intercept = 0) +
+  xlab("predicted log earn changes, CPS Test by Gender") +
+  ylab("actual log earn changes , CPS Test by Gender") +
+  theme_minimal()
+
+```
+
+Similar to the observations we drew for the ridge model calibration by gender, we can see that the lasso model calibration by gender performs worse on female observations (i.e. over- and under-predicts values more significantly than for male observations).
+
+**Exercise: Perform the same analysis for the lasso model predictions by running the calibration regression models and plotting the calibration n-tile plots using `gender` as a subgroup-- just as we did for the ridge model.** 
+
+## Calibration By Region
+
+We will perform a similar calibration analysis but this time using region size to create subgroups.
+
+```{r region_cat}
+# Reverse the scaling of the column representing region's size category to make the plots more understandable 
+cps_df_log_test$region_large_unscaled <-cps_df_log_test_unscaled$region_large
+
+```
+
+### Ridge 
+
+```{r ridge_calib_region}
+
+ggplot(cps_df_log_test, aes(x=ridge_predictions_test, y=log_d_earn, fill=factor(region_large_unscaled))) +
+  geom_point(aes(fill=factor(region_large_unscaled)),colour="transparent",shape=21) +
+  stat_smooth(aes(colour=factor(region_large_unscaled)),method="lm",se = FALSE) + 
+  geom_abline(slope=1, intercept = 0) +
+  xlab("predicted log earn changes, CPS Test by Region") +
+  ylab("actual log earn changes , CPS Test by Region") +
+  theme_minimal()
+
+table(cps_df_log_test$region_large_unscaled)
+
+```
+
+The plot above allows us to compare the line of a hypothetical, perfectly-calibrated model (black line) with the lines of our ridge wage prediction model for observations from one of the 4 regions, where region 1 is the smallest and region 4 is the largest. 
+
+In order to better understand the model calibration by region, we look at the distribution of observations across different regions. We observe that region 2 has the smallest number of observations (almost half as many as regions 3 and 4). We also observe from the calibration plot that the ridge model slope for region 2 is lower than that of the perfectly calibrated model, which implies that the ridge model over-predicts the actual log yearly earning changes at lower values and under-predicts the actual log yearly earning changes at higher values. Thus, we could explain the worse performance of the model in predicting log earning changes for observations in region 2 due to the small number of observations from that region. 
+
+In addition, lines for regions 1 and 3 show that the model predictions are better calibrated for these regions than for region 2; however, they are not as well calibrated as the line for region 4, which is the region with the highest number of observations. This shows the importance of having a balanced set of observations from different subgroups in obtaining a well calibrated model performance across subgroups.
+
+Again, the over- and under-predictions we observe for the ridge model are not large enough to make this model an unfit candidate for the wage prediction model.
+
+```{r ridge_calib_region1}
+# Run a calibration regression for observations with region==1 to obtain the slope of the regression model line plotted
+summary(lm(log_d_earn~ ridge_predictions_test, data=subset(cps_df_log_test, region_large_unscaled==1))) 
+```
+
+```{r ridge_calib_region2}
+# Run a calibration regression for observations with region==2 to obtain the slope of the regression model line plotted
+summary(lm(log_d_earn~ ridge_predictions_test, data=subset(cps_df_log_test, region_large_unscaled==2))) 
+```
+
+```{r ridge_calib_region3}
+# Run a calibration regression for observations with region==3 to obtain the slope of the regression model line plotted
+summary(lm(log_d_earn~ ridge_predictions_test, data=subset(cps_df_log_test, region_large_unscaled==3))) 
+```
+```{r ridge_calib_region4}
+# Run a calibration regression for observations with region==4 to obtain the slope of the regression model line plotted
+summary(lm(log_d_earn~ ridge_predictions_test, data=subset(cps_df_log_test, region_large_unscaled==4))) 
+```
+
+```{r ridgecalibration_ntiles_region1}
+
+num_tiles <- 10 
+cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$ridge_predictions_test, n=num_tiles))
+cps_df_log_test_grouped <- cps_df_log_test %>% 
+  dplyr::filter(region_large_unscaled==1) %>% 
+  group_by(ntile) %>% 
+  summarise(mean = mean(log_d_earn),
+            std = sd(log_d_earn), 
+            std_err=std/sqrt(dim(cps_df_log_test)[1]))
+  ggplot(cps_df_log_test_grouped) +
+  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                  size = 0.5,
+                  position = position_dodge(width = .5)) +
+  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                width = 0.4,
+                size = 0.75,
+                position = position_dodge(width = .5)) +
+  theme_linedraw() +
+  labs(x = "Deciles of predicted earning changes", y = "Mean actual earning changes within deciles", title = "Calibration plot for observations from Region 1 using deciles for better visibility")
+  
+```
+
+```{r ridgecalibration_ntiles_region2}
+
+num_tiles <- 10 
+cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$ridge_predictions_test, n=num_tiles))
+cps_df_log_test_grouped <- cps_df_log_test %>% 
+  dplyr::filter(region_large_unscaled==2) %>% 
+  group_by(ntile) %>% 
+  summarise(mean = mean(log_d_earn),
+            std = sd(log_d_earn), 
+            std_err=std/sqrt(dim(cps_df_log_test)[1]))
+  ggplot(cps_df_log_test_grouped) +
+  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                  size = 0.5,
+                  position = position_dodge(width = .5)) +
+  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                width = 0.4,
+                size = 0.75,
+                position = position_dodge(width = .5)) +
+  theme_linedraw() +
+  labs(x = "Deciles of predicted earning changes", y = "Mean actual earning changes within deciles", title = "Calibration plot for observations from Region 2 using deciles for better visibility")
+  
+```
+
+```{r ridgecalibration_ntiles_region3}
+
+num_tiles <- 10 
+cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$ridge_predictions_test, n=num_tiles))
+cps_df_log_test_grouped <- cps_df_log_test %>% 
+  dplyr::filter(region_large_unscaled==3) %>% 
+  group_by(ntile) %>% 
+  summarise(mean = mean(log_d_earn),
+            std = sd(log_d_earn), 
+            std_err=std/sqrt(dim(cps_df_log_test)[1]))
+  ggplot(cps_df_log_test_grouped) +
+  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                  size = 0.5,
+                  position = position_dodge(width = .5)) +
+  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                width = 0.4,
+                size = 0.75,
+                position = position_dodge(width = .5)) +
+  theme_linedraw() +
+  labs(x = "Deciles of predicted earning changes", y = "Mean actual earning changes within deciles", title = "Calibration plot for observations from Region 3 using deciles for better visibility")
+  
+```
+
+
+```{r ridgecalibration_ntiles_region4}
+
+num_tiles <- 10 
+cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$ridge_predictions_test, n=num_tiles))
+cps_df_log_test_grouped <- cps_df_log_test %>% 
+  dplyr::filter(region_large_unscaled==4) %>% 
+  group_by(ntile) %>% 
+  summarise(mean = mean(log_d_earn),
+            std = sd(log_d_earn), 
+            std_err=std/sqrt(dim(cps_df_log_test)[1]))
+  ggplot(cps_df_log_test_grouped) +
+  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                  size = 0.5,
+                  position = position_dodge(width = .5)) +
+  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                width = 0.4,
+                size = 0.75,
+                position = position_dodge(width = .5)) +
+  theme_linedraw() +
+  labs(x = "Deciles of predicted earning changes", y = "Mean actual earning changes within deciles", title = "Calibration plot for observations from Region 4 using deciles for better visibility")
+  
+```
+
+**Exercise: Please interpret these calibration plots. ** 
+
+### Lasso 
+```{r lasso_calib_region}
+
+ggplot(cps_df_log_test, aes(x=lasso_predictions_test, y=log_d_earn, fill=factor(region_large_unscaled))) +
+  geom_point(aes(fill=factor(region_large_unscaled)),colour="transparent",shape=21) +
+  stat_smooth(aes(colour=factor(region_large_unscaled)),method="lm",se = FALSE) + 
+  geom_abline(slope=1, intercept = 0) +
+  xlab("predicted log earn changes, CPS Test by Region") +
+  ylab("actual log earn changes , CPS Test by Region") +
+  theme_minimal()
+
+```
+
+We observe similar patterns for the lasso model by region to those observed for the ridge model. Again, the model is best calibrated for region 4 (the one with the highest number of observations) and worst calibrated for region 2 (the one with the lowest number of observations). Although not very clearly visible, the lasso model is slightly worse calibrated for region subgroups than is the ridge model. However, the difference in performance between the two models is not significant enough when considering the calibration by region.
+
+**Exercise: Perform the same analysis for the lasso model predictions by running the calibration regression models and plotting the calibration n-tile plots using `region_large_unscaled` (proxy for region size) as a subgroup-- just as we did for the ridge model.** 
+
+**Exercise: You can perform similar calibration analysis using education level, race, etc. to create other subgroups.**
+
+*Hint: If you decide to perform calibration analysis by race use the following code to create a categorical variable for race that will be helpful when plotting the calibration lines.*
+
+```{r race_cat}
+# Create a categorical variable for race
+cps_df_log_test <-cps_df_log_test %>%
+  mutate(
+         race_cat = if_else(race_white==1,1, if_else(race_black==1, 2, if_else(race_asian==1, 3, 4))
+             )
+  )
+
+table(cps_df_log_test$race_cat)
+
+```
+
+```{r sesinfo}
+sessionInfo()
+```
+
