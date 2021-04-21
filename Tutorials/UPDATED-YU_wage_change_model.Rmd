@@ -1,6 +1,6 @@
 ---
 title: "YearUp Labor Training Project: Building and Analyzing the Wage Change Prediction Model"
-author: "Parker Zhao / Test - Commit"
+author: "Parker Zhao, Angie Peng, Edmund Zhou, Mihcael Saadine, Alisha Anderson, Ricky Toh Wen Xian"
 date: "April 18, 2021"
 output: 
   html_document:
@@ -783,6 +783,7 @@ As can be seen from the $R^2$ above, even though the model performs well on the 
 Note that for the dummy variables, R automatically assigns NA as a coefficient to the baseline dummy variable when running a regression. This NA indicates that the variable in question (i.e. `region_large.4`) is linearly related to the other variables (in this case, `region_large.1`,  `region_large.2`, and  `region_large.3`). Thus, the regression would not have a unique solution without dropping one of these variables (in this case, `regression_large.4`). Also, note that these NA values do not have any effect on the computations of other coefficients.
 
 **Exercise: We have added a baseline linear model, but have not dealt with collinearity and model regularization. As an exercise, what kind of checks might you perform to assess the model's poor performance?**
+> I would look at covariance between the covariates to determine collinearity. I would also then just test the impact of regularization by using ridge or lasso with different parameters to see if it has a significant effect on the performance of the model.
 
 ## Ridge Model
 
@@ -1110,6 +1111,7 @@ Thus, the random forest model would not be a good candidate for the wage predict
 The interval plot below looks quite similar to previous models. 
 
 **Exercise: 10 intervals may not be a large enough number of bins. Increase the number of intervals (e.g. to 20, 50 or 100) for all of these plots and see whether they give you better visual evidence on the goodness of the calibrations. ** 
+> Having more dots does show clearly that it is not linear, though having 100 dots are not much better than 50, so increasing the number of intervals has a limited usefulness as the number of intervals become big.
 
 ```{r rfcalibration_ntiles}
 
@@ -1142,6 +1144,77 @@ ggplot(test_lm_grouped) +
   
 ```
 
+Now let us look at 20 bins:
+```{r rfcalibration_ntiles}
+
+num_tiles <- 20
+test_lm$ntile <- factor(ntile(test_lm$log_d_earn_pred, n=num_tiles))
+test_lm_grouped <- test_lm %>% 
+  group_by(ntile) %>% 
+  summarise(mean = mean(log_d_earn),
+            std = sd(log_d_earn), 
+            std_err=std/sqrt(dim(test_lm)[1]))
+  ggplot(test_lm_grouped) +
+  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                  size = 0.5,
+                  position = position_dodge(width = .5)) +
+  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                width = 0.4,
+                size = 0.75,
+                position = position_dodge(width = .5)) +
+  theme_linedraw() +
+  labs(x = "Deciles of predicted earning changes", y = "Mean actual earning changes within deciles", title = "Calibration plot using deciles for better visibility")
+  
+  
+```
+
+Now let us look at 50 bins:
+```{r rfcalibration_ntiles}
+
+num_tiles <- 50
+test_lm$ntile <- factor(ntile(test_lm$log_d_earn_pred, n=num_tiles))
+test_lm_grouped <- test_lm %>% 
+  group_by(ntile) %>% 
+  summarise(mean = mean(log_d_earn),
+            std = sd(log_d_earn), 
+            std_err=std/sqrt(dim(test_lm)[1]))
+  ggplot(test_lm_grouped) +
+  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                  size = 0.5,
+                  position = position_dodge(width = .5)) +
+  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                width = 0.4,
+                size = 0.75,
+                position = position_dodge(width = .5)) +
+  theme_linedraw() +
+  labs(x = "Deciles of predicted earning changes", y = "Mean actual earning changes within deciles", title = "Calibration plot using deciles for better visibility")
+  
+  
+```
+
+Now let us look at 100 bins:
+```{r rfcalibration_ntiles_100}
+
+num_tiles <- 100
+test_lm$ntile <- factor(ntile(test_lm$log_d_earn_pred, n=num_tiles))
+test_lm_grouped <- test_lm %>% 
+  group_by(ntile) %>% 
+  summarise(mean = mean(log_d_earn),
+            std = sd(log_d_earn), 
+            std_err=std/sqrt(dim(test_lm)[1]))
+  ggplot(test_lm_grouped) +
+  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                  size = 0.5,
+                  position = position_dodge(width = .5)) +
+  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                width = 0.4,
+                size = 0.75,
+                position = position_dodge(width = .5)) +
+  theme_linedraw() +
+  labs(x = "Deciles of predicted earning changes", y = "Mean actual earning changes within deciles", title = "Calibration plot using deciles for better visibility")
+  
+  
+```
 
 ## Model Calibration by Subgroups
 Having performed an overall model calibration analysis, we will perform the same analysis for different subgroups. We want to make sure that the model is robust and well calibrated not just across all observations but also across different subgroups of observations. Because the lasso and ridge models have performed better than the random forest model, we will use only the former two to perform the calibration by subgroups analysis. 
@@ -1177,6 +1250,55 @@ On the other hand, for male observations, the slope of the ridge regression line
 
 
 **Exercise: Please plot the calibration decile plots for the subgroup of male and females separately and inspect what they tell you.** 
+>Both plots are equally non-linear, which suggets that the calibrations are not that good for both male and female subgroups; the 3rd-9th decile for males are relatively good, but the female decile plots are a bit less linear.
+
+```{r ridgecalibration_ntiles_male}
+#Male
+num_tiles <- 10  
+
+cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$ridge_predictions_test, n=num_tiles))
+cps_df_log_test_grouped <- cps_df_log_test %>% 
+  filter(sex == 1) %>%
+  group_by(ntile) %>% 
+  summarise(mean = mean(log_d_earn),
+            std = sd(log_d_earn), 
+            std_err=std/sqrt(dim(cps_df_log_test)[1]))
+  ggplot(cps_df_log_test_grouped) +
+  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                  size = 0.5,
+                  position = position_dodge(width = .5)) +
+  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                width = 0.4,
+                size = 0.75,
+                position = position_dodge(width = .5)) +
+  theme_linedraw() +
+  labs(x = "Deciles of predicted earning changes", y = "Mean actual changes in log earnings within deciles", title = "Calibration plot using deciles for better visibility")
+```
+
+```{r ridgecalibration_ntiles_female}
+#Female
+
+num_tiles <- 10  
+
+cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$ridge_predictions_test, n=num_tiles))
+cps_df_log_test_grouped <- cps_df_log_test %>% 
+  filter(sex == 0) %>%
+  group_by(ntile) %>% 
+  summarise(mean = mean(log_d_earn),
+            std = sd(log_d_earn), 
+            std_err=std/sqrt(dim(cps_df_log_test)[1]))
+  ggplot(cps_df_log_test_grouped) +
+  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                  size = 0.5,
+                  position = position_dodge(width = .5)) +
+  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                width = 0.4,
+                size = 0.75,
+                position = position_dodge(width = .5)) +
+  theme_linedraw() +
+  labs(x = "Deciles of predicted earning changes", y = "Mean actual changes in log earnings within deciles", title = "Calibration plot using deciles for better visibility")
+```
+
 
 ### Lasso 
 ```{r lasso_calib_gender}
@@ -1194,6 +1316,58 @@ ggplot(cps_df_log_test, aes(x = lasso_predictions_test, y = log_d_earn, fill=fac
 Similar to the observations we drew for the ridge model calibration by gender, we can see that the lasso model calibration by gender performs worse on female observations (i.e. over- and under-predicts values more significantly than for male observations).
 
 **Exercise: Perform the same analysis for the lasso model predictions by running the calibration regression models and plotting the calibration n-tile plots using `gender` as a subgroup-- just as we did for the ridge model.** 
+
+```{r lassocalibration_ntiles_male}
+#Male
+
+num_tiles <- 10 
+
+cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$lasso_predictions_test, n=num_tiles))
+cps_df_log_test_grouped <- cps_df_log_test %>% 
+  filter(sex == 1) %>%
+  group_by(ntile) %>% 
+  summarise(mean = mean(log_d_earn),
+            std = sd(log_d_earn), 
+            std_err=std/sqrt(dim(cps_df_log_test)[1]))
+  ggplot(cps_df_log_test_grouped) +
+  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                  size = 0.5,
+                  position = position_dodge(width = .5)) +
+  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                width = 0.4,
+                size = 0.75,
+                position = position_dodge(width = .5)) +
+  theme_linedraw() +
+  labs(x = "Deciles of predicted earning changes", y = "Mean actual earning changes within deciles", title = "Calibration plot using deciles for better visibility")
+  
+  
+```
+
+```{r lassocalibration_ntiles_female}
+#Female
+
+num_tiles <- 10 
+
+cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$lasso_predictions_test, n=num_tiles))
+cps_df_log_test_grouped <- cps_df_log_test %>% 
+  filter(sex == 0) %>%
+  group_by(ntile) %>% 
+  summarise(mean = mean(log_d_earn),
+            std = sd(log_d_earn), 
+            std_err=std/sqrt(dim(cps_df_log_test)[1]))
+  ggplot(cps_df_log_test_grouped) +
+  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                  size = 0.5,
+                  position = position_dodge(width = .5)) +
+  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                width = 0.4,
+                size = 0.75,
+                position = position_dodge(width = .5)) +
+  theme_linedraw() +
+  labs(x = "Deciles of predicted earning changes", y = "Mean actual earning changes within deciles", title = "Calibration plot using deciles for better visibility")
+  
+  
+```
 
 ## Calibration By Region
 
@@ -1342,6 +1516,7 @@ cps_df_log_test_grouped <- cps_df_log_test %>%
 ```
 
 **Exercise: Please interpret these calibration plots. ** 
+>It seems that there is not much difference between 1, 3, and 4. They are relatively linear. The summary shows a very small Pr(), which means that it is still a relatively good calibration, even though all overestimate the last decile; 2 is similar, but it seems to also overestimate at lower deciles.
 
 ### Lasso 
 ```{r lasso_calib_region}
@@ -1359,6 +1534,120 @@ ggplot(cps_df_log_test, aes(x=lasso_predictions_test, y=log_d_earn, fill=factor(
 We observe similar patterns for the lasso model by region to those observed for the ridge model. Again, the model is best calibrated for region 4 (the one with the highest number of observations) and worst calibrated for region 2 (the one with the lowest number of observations). Although not very clearly visible, the lasso model is slightly worse calibrated for region subgroups than is the ridge model. However, the difference in performance between the two models is not significant enough when considering the calibration by region.
 
 **Exercise: Perform the same analysis for the lasso model predictions by running the calibration regression models and plotting the calibration n-tile plots using `region_large_unscaled` (proxy for region size) as a subgroup-- just as we did for the ridge model.** 
+
+```{r lasso_calib_region1}
+# Run a calibration regression for observations with region==1 to obtain the slope of the regression model line plotted
+summary(lm(log_d_earn~ lasso_predictions_test, data=subset(cps_df_log_test, region_large_unscaled==1))) 
+```
+
+```{r lasso_calib_region2}
+# Run a calibration regression for observations with region==2 to obtain the slope of the regression model line plotted
+summary(lm(log_d_earn~ lasso_predictions_test, data=subset(cps_df_log_test, region_large_unscaled==2))) 
+```
+
+```{r lasso_calib_region3}
+# Run a calibration regression for observations with region==3 to obtain the slope of the regression model line plotted
+summary(lm(log_d_earn~ lasso_predictions_test, data=subset(cps_df_log_test, region_large_unscaled==3))) 
+```
+
+```{r lasso_calib_region4}
+# Run a calibration regression for observations with region==4 to obtain the slope of the regression model line plotted
+summary(lm(log_d_earn~ lasso_predictions_test, data=subset(cps_df_log_test, region_large_unscaled==4))) 
+```
+
+
+```{r lassocalibration_ntiles_region1}
+
+num_tiles <- 10 
+cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$lasso_predictions_test, n=num_tiles))
+cps_df_log_test_grouped <- cps_df_log_test %>% 
+  dplyr::filter(region_large_unscaled==1) %>% 
+  group_by(ntile) %>% 
+  summarise(mean = mean(log_d_earn),
+            std = sd(log_d_earn), 
+            std_err=std/sqrt(dim(cps_df_log_test)[1]))
+  ggplot(cps_df_log_test_grouped) +
+  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                  size = 0.5,
+                  position = position_dodge(width = .5)) +
+  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                width = 0.4,
+                size = 0.75,
+                position = position_dodge(width = .5)) +
+  theme_linedraw() +
+  labs(x = "Deciles of predicted earning changes", y = "Mean actual earning changes within deciles", title = "Calibration plot for observations from Region 1 using deciles for better visibility")
+  
+```
+
+```{r lassocalibration_ntiles_region2}
+
+num_tiles <- 10 
+cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$lasso_predictions_test, n=num_tiles))
+cps_df_log_test_grouped <- cps_df_log_test %>% 
+  dplyr::filter(region_large_unscaled==2) %>% 
+  group_by(ntile) %>% 
+  summarise(mean = mean(log_d_earn),
+            std = sd(log_d_earn), 
+            std_err=std/sqrt(dim(cps_df_log_test)[1]))
+  ggplot(cps_df_log_test_grouped) +
+  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                  size = 0.5,
+                  position = position_dodge(width = .5)) +
+  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                width = 0.4,
+                size = 0.75,
+                position = position_dodge(width = .5)) +
+  theme_linedraw() +
+  labs(x = "Deciles of predicted earning changes", y = "Mean actual earning changes within deciles", title = "Calibration plot for observations from Region 2 using deciles for better visibility")
+  
+```
+
+```{r lassocalibration_ntiles_region3}
+
+num_tiles <- 10 
+cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$lasso_predictions_test, n=num_tiles))
+cps_df_log_test_grouped <- cps_df_log_test %>% 
+  dplyr::filter(region_large_unscaled==3) %>% 
+  group_by(ntile) %>% 
+  summarise(mean = mean(log_d_earn),
+            std = sd(log_d_earn), 
+            std_err=std/sqrt(dim(cps_df_log_test)[1]))
+  ggplot(cps_df_log_test_grouped) +
+  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                  size = 0.5,
+                  position = position_dodge(width = .5)) +
+  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                width = 0.4,
+                size = 0.75,
+                position = position_dodge(width = .5)) +
+  theme_linedraw() +
+  labs(x = "Deciles of predicted earning changes", y = "Mean actual earning changes within deciles", title = "Calibration plot for observations from Region 3 using deciles for better visibility")
+  
+```
+
+```{r lassocalibration_ntiles_region4}
+
+num_tiles <- 10 
+cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$lasso_predictions_test, n=num_tiles))
+cps_df_log_test_grouped <- cps_df_log_test %>% 
+  dplyr::filter(region_large_unscaled==4) %>% 
+  group_by(ntile) %>% 
+  summarise(mean = mean(log_d_earn),
+            std = sd(log_d_earn), 
+            std_err=std/sqrt(dim(cps_df_log_test)[1]))
+  ggplot(cps_df_log_test_grouped) +
+  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                  size = 0.5,
+                  position = position_dodge(width = .5)) +
+  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                width = 0.4,
+                size = 0.75,
+                position = position_dodge(width = .5)) +
+  theme_linedraw() +
+  labs(x = "Deciles of predicted earning changes", y = "Mean actual earning changes within deciles", title = "Calibration plot for observations from Region 4 using deciles for better visibility")
+  
+```
+
 
 **Exercise: You can perform similar calibration analysis using education level, race, etc. to create other subgroups.**
 
