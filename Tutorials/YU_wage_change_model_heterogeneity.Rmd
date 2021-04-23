@@ -1,0 +1,648 @@
+---
+title: "YearUp Labor Project: Predicting Counterfactual Wages for YU Participants"
+author: "YOUR NAME"
+date: "April 2021"
+output: 
+  html_document:
+    highlight: haddock
+    theme: journal
+    number_sections: no
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+    code_folding: hide
+---
+
+```{r setup, include = FALSE}
+
+# ```{r pressure, echo=FALSE}
+
+knitr::opts_chunk$set(
+  eval = TRUE,
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE
+)
+
+```
+
+# Loading required packages
+
+```{r load_tidyverse}
+# Ensure that pacman is installed for package management and loading.
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse) # for data reading wrangling and visualization
+
+```
+
+```{r load_packages}
+# for enabling dataframe manipulation
+pacman::p_load(dplyr)
+# for modeling, transforming, and visualizing data
+pacman::p_load(tidyverse)
+# for simplifying the process of creating tidy dat
+pacman::p_load(tidyr)
+# for working with tabular data
+pacman::p_load(data.table)
+# for data visualization
+pacman::p_load(ggplot2)
+# provides support to ggplot2 for labeling graphs
+pacman::p_load(directlabels)
+# for streamlining the model training process 
+pacman::p_load(caret)
+# for fitting a generalized linear model 
+pacman::p_load(glmnet)
+# for enabling fast implementation of random forests 
+pacman::p_load(ranger)
+# for providing a general-purpose tool for dynamic report generation
+pacman::p_load(knitr)
+# for providing a prettier RMarkdown (1.0.1)
+pacman::p_load(kableExtra)
+# for forest-based statistical estimation and inference
+pacman::p_load(grf)
+```
+
+# Brief Tutorial Description
+The goal of this tutorial is to predict what the year over year wage changes of Year Up participants would have been, had they not participated in the program.  We do this using the prediction model we built from a general population in the previous tutorial, and predict wage changes in the Year Up sample, based on their observable characteristics. 
+
+The tutorial goes through the following steps: 
+
+1) We load, clean and preprocess the Year-Up data. This includes making sure all the variables have the same names and are coded the same as in the CPS. It is important that the variables in the YearUp data are congruent with the CPS data, because we want to predict counterfactual wages in the Year-Up data from the model built in the CPS. 
+
+2) Using the best wage prediction model from the previous tutorial, we predict wage changes for Year-Up participants and thereby build our "control group". 
+
+3) We compare the difference in mean actual outcomes with mean counterfactual predicted outcomes, by building a "treatment effect model". This gives us the treatment effect, i.e. the return to participating in Year Up on wage changes. 
+
+4) Next, we repeat the above exercise for subgroups, and look e.g. at how returns to Year Up differ for men and women. 
+
+# Loading and Processing the Data
+We begin by reading in the Year Up data. It comes in two separate files: the records on participants before they started Year Up are in a different dataset from than the post Year Up records. We need to load both and merge them on the "PACE_ID" - which is the unique person identifier. As previously in the case of CPS data, we further "enrich" this data with task and county data, that we merge to participants' occupations and counties respectively, to have richer information on both. The task data stems from Autor and Dorn's 2013 paper: "The Growth of Low-Skill Service Jobs and the Polarization of the US Labor Market" and described the routine, manual and abstract task intensity of occupations. More information about the data can be found [here](https://www.ddorn.net/data.htm). The additional location data comes from "Neighborhood Characteristics by County" in Opportunity Insight's data library which can be found [here](https://opportunityinsights.org/data/).
+
+Since our wage prediction model in the CPS uses these additional variables, we also need them in this dataset. 
+
+```{r read_data}
+
+# Load the pre- and post-YU data
+df_post<-fread("Datasets/20210119_YU_post_data.csv") #post Year Up records on individuals
+df_pre<-fread("Datasets/20210119_YU_pre_data.csv")   #pre Year Up records on individuals
+
+# Load the CPI data
+cpi <- read.csv("Datasets/cpi.csv") # yearly consumer price index with which we deflate earnings to USD 2010. 
+
+# Load onet crosswalk occupation classifications data
+df_xwalk<-fread("Datasets/onet_occ2010_crosswalk.csv") #Year Up occupations have been classified (by our internal algorithm, not shown here - from plein text to onet occupations. Because of our CPS wage prediction model, we need occupations classified with the CPS occ2010 classificaiton. We therefore use a so-called classification crosswalk, which is tells us what the corresponing occ2010 code to each o-net code is.)
+
+# Load occupation digit data
+occ1digit<-fread("Datasets/occ1digit.csv")
+
+# Load  task data
+yu_tasks<-fread("Datasets/tasks_2010.csv")
+
+# Load FIPS encoding data - to make sure we can merge the files as needed. 
+metro_fips<-fread("Datasets/fips_site_location.csv")
+
+# Load CPS regions data
+region<-fread("Datasets/state_to_region.csv")
+
+# Load county-level data
+county_vars<-fread("Datasets/count_level_covars.csv")
+
+```
+
+
+We first merge the pre- and post-YU data together by the person id (PACE_ID). Then, we add the CPI to the year records, in order to deflate wages and make them constant 2010 USD. Further, we add an occupational encoding crosswalk: Year Up occupations have been classified (by our internal NLP algorithm, not shown here) - from plein text to O NET occupations. Because of our CPS wage prediction model, we need occupations classified with the CPS occ2010 classificaiton. We therefore use a so-called classification crosswalk, which tells us what the corresponing occ2010 code to each O NET code is. We then add the relevant county-level variables to counties as well as task indices to occupations to the Year Up data. 
+
+```{r merge_data}
+
+# Merge the pre- and post-YU data
+yu_df<-merge(df_post,df_pre, by=c("PACE_ID", "Gender", "Race", "Age_at_Start_of_Cohort", "State", "Site", "Edu"), all.x = FALSE, all.y = FALSE)
+yu_df<-yu_df %>% distinct(PACE_ID, .keep_all = TRUE) #there are a few duplicate pace_ids, which should not be the case - we drop them. 
+
+# Rename YU data to have the same names and encodings and CPS data. 
+yu_df<-yu_df %>%
+  mutate(sex=Male_Flag,
+         year_pre=Year-1,
+         year_post=Year,
+         age_pre=Age_at_Start_of_Cohort-1,
+         age2_pre=age_pre^2,
+         age_post=Age_at_Start_of_Cohort,
+         age2_post=age_post^2,
+         race_white= if_else(Race=="White",1,0),
+         race_black= if_else(Race=="Black or African American",1,0), 
+         race_asian= if_else(Race=="Asian",1,0),
+         edu_num= Edu,
+         experience=Exp_4, 
+         experience2=experience^2)
+
+# Unify naming for pre and post YU jobs and earnings
+yu_df<-yu_df %>%
+  mutate(occ_onet_pre=ONET_4_Job_preYU,
+         earnings_pre=ONET_4_Salary_pre_YU,
+         occ_onet_post=ONETCode_post_YU,
+         earnings_post=SAL_YU_POSTYU)
+
+# keep only variables of interest
+yu_df <-yu_df%>%
+  select(PACE_ID,Site,Cohort, sex, race_white, 
+         race_asian, race_black, edu_num, experience, experience2,
+         year_pre, age_pre,age2_pre, occ_onet_pre,earnings_pre,
+         year_post,age_post, age2_post,occ_onet_post,earnings_post)
+
+
+# rehape data from wide to "long", so that we have two entries per individual, pre and post.   
+yu_df_long<-reshape(yu_df, direction='long', 
+                    varying=c("age_pre","age2_pre", "earnings_pre","occ_onet_pre","year_pre",
+                               "age_post", "age2_post","earnings_post", "occ_onet_post", "year_post"),
+                    timevar='prepost',
+                    times=c('1_pre', '2_post'),
+                    v.names=c('age', 'age2','earnings','occ_onet', 'year'),
+                    idvar='PACE_ID')
+
+```
+
+
+## Applying log transformation on wages and creation of outcome variable: change in log earnings
+We apply a log transformation on the pre and post real yearly earnings 1 and 2 (1 is pre and 2 is post), 'real_yearly_earnings_1' and 'real_yearly_earnings_2', such that the variable 'log_d_earn' is the log ratio of the 'real_yearly_earnings_2' to 'real_yearly_earnings_1' (i.e. log_d_earn = log(real_yearly_earnings_2/real_yearly_earnings_1)). This log transformation is appropriate because it deals with the positively skewed distribution of the yearly earnings variables. Also, note that while applying this log transformation, we add a delta of 0.001 to these real yearly earnings in order to prevent the log values from "exploding" and becoming NaNs in case the earnings have a value of 0.
+
+```{r merge_data2 }
+
+## Deflate wages (adjust for inflation) to USD 2010 real wages
+# Merge cpi & convert to real values with 2010 base rate
+yu_df_long <- left_join(yu_df_long,cpi, by="year", all.x = TRUE)
+
+yu_df_long <- yu_df_long  %>%
+  mutate(real_yearly_earnings=earnings/value)
+
+# log transformation of real yearly earnings (in levels), plus inserting a small data in case some earnings are 0. 
+
+yu_df_long<-yu_df_long %>%
+  mutate(real_yearly_earnings=if_else(real_yearly_earnings==0,0.001,real_yearly_earnings),
+         log_earnings=log(real_yearly_earnings))
+
+# Merge onet crosswalk to compare handle CPS occupation coding
+yu_df_long<-merge(yu_df_long, df_xwalk, by.x ="occ_onet", by.y ="onet_soc_code", all.x = TRUE)
+
+# Merge YU data with occupation coding data 
+yu_df_long<-merge(yu_df_long, occ1digit, by= "occ2010", all.x = TRUE)
+
+# Merge YU data with tasks data
+yu_df_long<- merge(yu_df_long,yu_tasks,by="occ2010",all.x = TRUE)
+
+# Merge fips encoding
+metro_fips<-metro_fips %>% select(-V4, county_fips) 
+yu_df_long<-merge(yu_df_long,metro_fips, by="Site", all.x = TRUE)
+
+# Merge county level info
+county_vars<-county_vars %>%
+  select(cty, county_name, cty_pop2000, cz, cz_name, cz_pop2000, intersects_msa,
+         cs00_seg_inc, cs00_seg_inc_pov25, cs00_seg_inc_aff75, cs_race_theil_2000,
+         gini99, poor_share, inc_share_1perc, frac_middleclass, 
+         rel_tot, cs_frac_black, cs_frac_hisp, unemp_rate, pop_d_2000_1980, 
+         lf_d_2000_1980, cs_labforce, cs_elf_ind_man, cs_born_foreign, mig_inflow,         
+         mig_outflow, pop_density, frac_traveltime_lt15, hhinc00, median_house_value, cs_educ_ba,  cs_fam_wkidsinglemom, crime_total, subcty_exp_pc, taxrate, tax_st_diff_top20)
+yu_df_long<-merge(yu_df_long,county_vars, by.x="fips", by.y = "cty", all.x = TRUE)
+
+# Get regions from CPS
+yu_df_long<-merge(yu_df_long, region, by.x ="state_fips", by.y ="statefip",all.x = TRUE)
+
+# Get values of occ2010 to restrict to in training data
+occuring<-paste(unique(yu_df_long$occ2010), collapse=",")
+
+# Get the occupations of YU partipants before the training program
+pre<-yu_df_long %>% filter(prepost=="1_pre")
+startocc<-paste(unique(pre$occ2010), collapse=",") # In the first tutorial, this is the vector on which we restrict which occupations we keep in the CPS data - i.e. all occuring starting occupations pre-YU in this data. 
+
+# Get the occupations of YU partipants after the training program
+post<-yu_df_long %>% filter(prepost=="2_post")
+endocc<-paste(unique(post$occ2010), collapse=",")
+
+```
+
+
+```{r log_transform_y}
+
+yu_df <- reshape(yu_df_long, direction='wide', 
+                idvar='PACE_ID',
+                timevar= "prepost")
+
+# Log earnings change
+yu_df <- yu_df %>%
+  mutate(log_d_earn=log_earnings.2_post - log_earnings.1_pre)
+
+# Now that we have generated the earnings change variable, we can keep only one line per individual, the pre-records are enough. Before we do that, let's generate a copy of the datasets with two record per individual, in case we still need it. 
+
+yu_df_copy <- yu_df #generate copy
+yu_df <- yu_df %>%
+  select(PACE_ID, log_d_earn,  log_earnings.2_post, log_earnings.1_pre,
+         real_yearly_earnings.1_pre,real_yearly_earnings.2_post, contains("1_pre")) #only keep "pre records"
+
+# Rename variables dropping their prefixes. 
+colnames(yu_df)<-c("PACE_ID","log_d_earn","log_earnings.2_post", "log_earnings.1_pre", "real_yearly_earnings.1_pre","real_yearly_earnings.2_post","state_fips","fips","Site","occ2010","occ_onet",                    "Cohort","sex", "race_white","race_asian","race_black","edu_num",
+                   "experience","experience2","age", "age2", "raw_earnings_pre", "year","value",
+                   "occ1digit",
+                   "RTIa","task_abstract","task_manual","task_routine","metfips",
+                   "metro_name", "County_name", "county_fips","state_name","county_name",
+                   "cty_pop2000", "cz","cz_name","cz_pop2000", "intersects_msa","cs00_seg_inc",
+                   "cs00_seg_inc_pov25", "cs00_seg_inc_aff75","cs_race_theil_2000",
+                   "gini99","poor_share","inc_share_1perc", "frac_middleclass", 
+                   "rel_tot","cs_frac_black", "cs_frac_hisp","unemp_rate","pop_d_2000_1980",
+                   "lf_d_2000_1980","cs_labforce","cs_elf_ind_man","cs_born_foreign",
+                   "mig_inflow","mig_outflow","pop_density","frac_traveltime_lt15","hhinc00",
+                   "median_house_value",
+                   "cs_educ_ba","cs_fam_wkidsinglemom","crime_total",
+                   "subcty_exp_pc","taxrate","tax_st_diff_top20", "region_large")
+
+```
+
+## Description of YU Features
+Before we continue with preparing the YU data for analysis, we will familiarize ourselves with the features included in the YU data and get summary statistics for these features. 
+
+
+## YU Sample Definition
+Our YU sample consists of all observations for whom we observe pre-and post Year Up (actual) wages, which are denoted by 'real_yearly_earnings_1' and 'real_yearly_earnings_2', which includes 1469 individuals. Note that the original pre- and post datasets are both larger, but this is the resulting size of individuals for whom we records of both pre and post earnings.  
+
+## Codebook 
+By design now, the included variables and variable names are identical to those in the CPS data.
+
+
+| Variable name                           | Description                                    |
+|-----------------------------------------|------------------------------------------------|
+| log_d_earn                              | Difference in log earnings at t+1 and t        |
+| real_yearly_earnings                    | Earnings at year t                             |
+| male                                    | Male                                           |
+| race_white                              | Race: While                                    |
+| race_asian                              | Race: Asian                                    |
+| race_black                              | Race: Black                                    |
+| edu_num                                 | Years of Education                             |
+| experience                              | Years of Experience                            |
+| experience2                             | Years of Experience Squared                    |
+| age                                     | Age                                            |
+| age2                                    | Age Squared                                    |
+| year                                    | Year of YU entry                               |
+| RTIa                                    | Previous occupation: task index                |
+| task_abstract                           | Previous occupation: abstract task measure     |
+| task_manual                             | Previous occupation: manual task measure       |
+| task_routine                            | Previous occupation: routine task measure      |
+| Occupation Groups (previous occupation) |                                                |
+| occ1digit_art_sports_media              | Arts, Design, Entertainment, Sports, and Media |
+| occ1digit_building_cleaning             | Building and Grounds Cleaning and Maintenance  |
+| occ1digit_business_op                   | Business Operations Specialists                |
+| occ1digit_community                     | Community and Social Services                  |
+| occ1digit_computer_mathematica          | Computer and Mathematical                      |
+| occ1digit_construction                  | Construction                                   |
+| occ1digit_educ                          | Education, Training, and Library               |
+| occ1digit_farm_fish_forest              | Farming, Fisheries, and Forestry               |
+| occ1digit_finacial_spec                 | Financial Specialists                          |
+| occ1digit_food_serving                  | Food Preparation and Serving                   |
+| occ1digit_healthcare_supp               | Healthcare Support                             |
+| occ1digit_healthcare_tech               | Healthcare Practitioners and Technicians       |
+| occ1digit_install_maint_rep             | Installation, Maintenance, and Repair          |
+| occ1digit_life_physical_ssc             | Life, Physical, and Social Science             |
+| occ1digit_management                    | Management in Business, Science, and Arts      |
+| occ1digit_offic_admin                   | Office and Administrative Support              |
+| occ1digit_pers_care                     | Personal Care and Service                      |
+| occ1digit_production                    | Production                                     |
+| occ1digit_protective_serv               | Protective Service                             |
+| occ1digit_sales                         | Sales and Related                              |
+| occ1digit_technician                    | Technicians                                    |
+| occ1digit_transport                     | Transportation and Material Moving             |
+| Location characteristics                |                                                |
+| cty_pop2000                             | County Population in 2000                      |
+| cz_pop2000                              | Commuting Zone Population in 2000              |
+| intersects_msa                          | Urban Area                                     |
+| cs00_seg_inc                            | Income Segregation                             |
+| cs00_seg_inc_pov25                      | Segregation of Poverty (< p25)                 |
+| cs00_seg_inc_aff75                      | Segregation of Affluence (>p75)                |
+| cs_race_theil_2000                      | Racial Segregation                             |
+| gini99                                  | Gini Index Within Bottom 99%                   |
+| poor_share                              | Poverty Rate                                   |
+| inc_share_1perc                         | Top 1% Income Share                            |
+| frac_middleclass                        | Fraction Middle Class (p25-p75)                |
+| scap_ski90pcm                           | Social Capital Index                           |
+| rel_tot                                 | Percent Religious                              |
+| cs_frac_black                           | Percent Black                                  |
+| cs_frac_hisp                            | Percent Hispanic                               |
+| unemp_rate                              | Unemployment Rate in 2000                      |
+| pop_d_2000_1980                         | Percent Change in Population 1980-2000         |
+| lf_d_2000_1980                          | Percent Change in Labor Force 1980-2000        |
+| cs_labforce                             | Labor Force Participation                      |
+| cs_elf_ind_man                          | Share Working in Manufacturing                 |
+| cs_born_foreign                         | Percent Foreign Born                           |
+| mig_inflow                              | Migration Inflow Rate                          |
+| mig_outflow                             | Migration Outflow Rate                         |
+| pop_density                             | Population Density                             |
+| frac_traveltime_lt15                    | Fraction with Commute < 15 Min                 |
+| hhinc00                                 | Mean Household Income                          |
+| median_house_value                      | Median House Value                             |
+| ccd_exp_tot                             | School Expenditure per Student                 |
+| ccd_pup_tch_ratio                       | Student-Teacher Ratio                          |
+| score_r                                 | Test Score Percentile (Income Adjusted)        |
+| dropout_r                               | High School Dropout Rate (Income Adjusted)     |
+| cs_educ_ba                              | Percent College Grads                          |
+| tuition                                 | College Tuition                                |
+| gradrate_r                              | Percent College Grads                          |
+| e_rank_b                                | Absolute Mobility (Expected Rank at p25)       |
+| cs_fam_wkidsinglemom                    | Fraction of Children with Single Mother        |
+| crime_total                             | Total Crime Rate                               |
+| subcty_exp_pc                           | Local Government Expenditures                  |
+| taxrate                                 | Local Tax Rate                                 |
+| tax_st_diff_top20                       | Tax Progressivity                              |
+| region_large                            | 4 Regions                                      |
+
+## Summary Statistics
+
+```{r summary_stats,  message=FALSE, echo = TRUE}
+
+# Make a data.frame containing summary statistics of interest
+yu_dfsum<-yu_df %>% dplyr::select(log_d_earn, real_yearly_earnings.1_pre,real_yearly_earnings.2_post, where(is.numeric), -c(PACE_ID,value,RTIa, state_fips, fips, log_earnings.1_pre,log_earnings.2_post,cz, raw_earnings_pre,county_fips, metfips))
+summ_stats <- fBasics::basicStats(yu_dfsum)
+summ_stats <- as.data.frame(t(summ_stats))
+# Rename some of the columns for convenience
+summ_stats <- summ_stats[c("Mean", "Stdev", "Minimum", "1. Quartile", "Median",  "3. Quartile", "Maximum")]
+colnames(summ_stats)[colnames(summ_stats) %in% c('1. Quartile', '3. Quartile')] <- c('Lower quartile', 'Upper quartile')
+
+```
+
+```{r summary_stats_table, message=FALSE, echo = TRUE}
+
+# Pretty-printing in HTML
+summ_stats_table <- kable(summ_stats, "html", digits = 2)
+kable_styling(summ_stats_table,
+              bootstrap_options=c("striped", "hover", "condensed", "responsive"),
+              full_width=FALSE)
+```
+
+
+
+ 
+
+## Filtering Observations
+
+Next we want to know if there are any outliers in our data, especially in the earnings variables. Outliers can arise from either data entry mistakes or can be true outliers, i.e. an individual who is not at all representative of the rest of the sample. We do not want such observations in the data, since they would bias the analysis. 
+However, before we filter out any observations, we perform some analysis to understand the effect of throwing out these observations on the overall data.
+
+As mentioned in the model building tutorial, an easy way to perform initial outlier analysis is to plot a histogram, so we begin by summarizing and plotting the histogram for the YU data variables of interest-- 'log_d_earn', which is the difference in yearly log wages, as well as  pre and post 'real_yearly_earnings', which we use to compute the yearly earnings difference. We then observe the histograms to identify any potential outliers that would require further investigation.  
+
+```{r raw_data_analysis}
+
+# Perform statistical summaries for the variables of interest
+summary(yu_df$log_d_earn)
+summary(yu_df$real_yearly_earnings.1_pre)
+summary(yu_df$real_yearly_earnings.2_post)
+
+
+# Plot the histograms for these variables
+ggplot(yu_df, aes(x=log_d_earn)) + 
+  geom_histogram(bins = 100)
+ggplot(yu_df, aes(x=real_yearly_earnings.1_pre)) + 
+  geom_histogram(bins = 100)
+ggplot(yu_df, aes(x=real_yearly_earnings.2_post)) + 
+  geom_histogram(bins = 100)
+
+```
+
+
+We can already see that in YU pre-wages, there are some extremely high incomes, that are likely data-entry mistakes. Nobody with incomes over one-million needs to go through the YU program!
+
+NOTE: Feel free to add more histogram plots for other variables you think might be important to your analysis!
+
+
+```{r filter_obs}
+# Get the min and max real yearly earnings for YU participants BEFORE the training program
+min(yu_df$real_yearly_earnings.1_pre)
+max(yu_df$real_yearly_earnings.1_pre)
+
+# Get the min and max real yearly earnings for YU participants AFTER the training program
+min(yu_df$real_yearly_earnings.2_post)
+max(yu_df$real_yearly_earnings.2_post)
+
+high_rye <- yu_df[yu_df$real_yearly_earnings.1_pre > 150000 | yu_df$real_yearly_earnings.2_post > 150000]
+
+# Percent change in income after YU training program
+((high_rye$real_yearly_earnings.2_post - high_rye$real_yearly_earnings.1_pre) / high_rye$real_yearly_earnings.1_pre) * 100 
+
+sum(yu_df$real_yearly_earnings.1_pre > 100000)
+# Percent of observations with real yearly earnings above USD 100,000 BEFORE the training program
+(sum(yu_df$real_yearly_earnings.1_pre>100000) / length(yu_df$real_yearly_earnings.1_pre)) * 100 
+
+sum(yu_df$real_yearly_earnings.1_pre>150000)
+# Percent of observations with real yearly earnings above USD 150,000 BEFORE the training program
+(sum(yu_df$real_yearly_earnings.1_pre>200000) / length(yu_df$real_yearly_earnings.1_pre)) * 100 
+
+sum(yu_df$real_yearly_earnings.1_pre>500000)
+# Percent of observations with real yearly earnings above USD 500,000 BEFORE the training program
+(sum(yu_df$real_yearly_earnings.1_pre>500000) / length(yu_df$real_yearly_earnings.1_pre)) * 100 
+
+sum(yu_df$real_yearly_earnings.1_pre>1000000)
+# Percent of observations with real yearly earnings above USD 1,000,000 BEFORE the training program
+(sum(yu_df$real_yearly_earnings.1_pre>1000000) / length(yu_df$real_yearly_earnings.1_pre))* 100 
+
+# Filter out observations with real yearly earnings above USD 150,0000
+yu_df = yu_df[yu_df$real_yearly_earnings.1_pre <= 150000]
+
+# Plot the histograms for these variables
+ggplot(yu_df, aes(x=log_d_earn)) + 
+  geom_histogram(bins = 100)
+```
+Observing the summary table, we notice that the maximum real yearly earning pre-YU training program is 1,484,798 which is most likely an outlier and implies that there might be other outliers. We then take a deeper dive into the data to further investigate any other potential outlier.  
+
+We observe that for the 4 observations with pre YU earnings of more than USD 150,000, there was a 97.8%, 99.0%, 96.6%, and 95.4% decrease in earnings after attending the YU training program which is most likely a result of data inputting errors. So, to avoid obfuscating our analysis and knowing that these observations are not true representatives of the YU participants, we filter out any observation with a real yearly earning higher than USD 150,000.
+
+We then plot the histogram again and notice that the range of 'log_d_earn' values significantly shrunk and that the distribution is less skewed than previously when we had the outliers in the data. 
+
+## Dealing with Missing Values 
+We next need to deal with any missing values in our dataset, since these would cause problems when we use the data to predict the counterfactual outcomes below. We deal with missing values in our dataset by checking how many there are. Since the share of missing value is relatively small, we we decide to drop the rows with missing values. Another way of dealing with missing values is to do an imputation, which is essentially a way of predicting the missing values based on the existing data. This leaves us with 1143 individuals in the Year Up data. We check what that does to our outcome variable, too. 
+
+```{r process_raw_data}
+# Deal with missing values
+
+# Check how many NAs there are in each variable 
+pct_na <- function(vec) {
+  mean(is.na(vec))
+}
+
+sapply(yu_df, pct_na)
+
+yu_df  <- na.omit(yu_df ) #drop them
+
+#summarize outcome after dropping NAs
+summary(yu_df$log_d_earn)
+# Plot the histograms for these variables
+ggplot(yu_df, aes(x=log_d_earn)) + 
+  geom_histogram(bins = 100)
+```
+
+
+## Preprocessing the Dataset to Run Model Predictions on YU Data
+We created a dataframe with the relevant columns for our wage prediction model and now convert certain variables, such as region_large (which represents the four regions in the US - North East, South, West and Mid-West), into categorical variables where appropriate and then convert those into dummy (or one-hot) variables. Note that with ML models, we want to avoid having too many dummy variables as certain models like random forests do not do well with them. Instead, we make sure that the variables with many categories, such as counties and occupations are instead well described using continous variables like the county neighborhood data and the task data. 
+
+Further, we again need to scale the continuous explanatory variables, the same way we did in the CPS. Indeed, we need to scale the data based on the moments of the CPS data, since we trained the model on that data and will be predicting on the YU data.
+
+```{r process_analysis_data}
+yu_df<- yu_df%>% rename(log_real_yearly_earnings_1=log_earnings.1_pre)
+
+yu_df = yu_df[, !("occ2010")] # dont need this variable
+
+# Convert variables that are not yet into factors 
+class(yu_df)<-class(as.data.frame(yu_df))
+categorical<-c("year", "region_large")
+yu_df[ ,categorical] <- lapply(yu_df[ , categorical] , factor)
+
+```
+
+**NOTE: Before running the code below, please make sure you have run the initial model-building tutorial and have all the model objects saved in your project folder (i.e. the `vars.rds` object below that loads the processed CPS dataset from the initial tutorial).** 
+```{r load_cps}
+
+# Load the CPS variables from memory
+vars <- readRDS("vars.rds")
+cont<- vars %>%dplyr::select(-c(year, region_large, sex, race_white, 
+                                race_black, race_asian)) # picking continous variables by exclduing the few categorical variables
+
+# Select the variables from the YU data that match the ones from the CPS data
+cont<-c(colnames(cont))
+class(yu_df)<-class(as.data.frame(yu_df))
+
+# Load the preprocessed CPS data from memory because we preprocess the YU data
+# using the CPS training data preprocessing parameters
+pre_proc_val <- readRDS("pre_proc_val.rds")
+yu_df[,cont] = predict(pre_proc_val, yu_df[,cont])
+
+```
+
+```{r make_dummies}
+
+# Make dummies from all categorical variables
+class(yu_df) <- class(as.data.frame(yu_df))
+col_vars<-colnames(vars)
+control_vars = col_vars
+
+cols_reg = c(control_vars,  'log_d_earn')
+dummies <- dummyVars(log_d_earn ~ ., data = yu_df[,cols_reg])
+yu_df_dummies = predict(dummies, newdata = yu_df[,cols_reg])
+
+# Manually create one missing category
+yu_df_dummies <- as.data.frame(yu_df_dummies)
+yu_df_dummies <-yu_df_dummies %>% mutate(year.2006=0)
+
+# Make sure columns are in same order across the CPS and YU datasets
+cols <- readRDS("cols.rds")
+yu_df_dummies <-yu_df_dummies %>% select(cols)
+
+```
+
+# Using the Ridge Model to Predict Counterfactual Wage Changes in the YU Data
+Finally, we can predict counterfactual wages for Year Up participants using our best model we built in the previous tutorial. As we have shown in the model building tutorial, the ridge model performed better than the other models we built and it was also well calibrated, which is why we use the ridge model trained on CPS data get the counterfactual wage change predictions. 
+
+We load the ridge model, that we saved in the previous tutorial and also remember that 0.001 was the optimal lambda that we obtained from crossfitting. We then use the ridge model and predict on the YU data as "new data". 
+
+We summarize the predicted values.
+
+```{r ridge_yu_preds}
+
+# Load the ridge regression model & optimal lambda from memory
+load("ridge_reg_cps.rda")
+
+# Use ridge optimal lambda obtained from the model building tutorial
+optimal_lambda <- 0.001
+
+# Convert the YU variables to be used as input features into matrix form
+yu_df_xdummies = as.matrix(yu_df_dummies)
+
+# Predict on new YU data
+yu_log_d_earn_pred <- predict(ridge_reg_cps, s = optimal_lambda, newx = yu_df_xdummies)
+
+#summary(yu_df$log_d_earn)
+summary(yu_log_d_earn_pred)
+
+```
+
+# Building an Overall Treatment Effect Model 
+
+Now that we have the actual yearly earning changes of Year Up participants as well as the counterfactual yearly earning changes (earning changes had they not participated in the training program), we can do the main step of the analysis and compare the two outcomes. To that end, we simply compare the average in actual yearly earning changes to the average in counterfactual yearly earning changes. That is exactly equivalent to regressing yearly earning changes on a treatment indicator, where the treatment indicator shows whether the outcome is the actual (treatment) or counterfactual (control) outcome. 
+
+```{r treat_effect_model}
+# Define the treatment group in YU data
+treatment<-yu_df %>% mutate(treatment=1)
+
+# Define the control group in YU data
+control<-yu_df%>% mutate(treatment=0)
+control<-control %>% select(-log_d_earn)
+
+# Predict the difference in log yearly earnings for observations in the control group
+control$log_d_earn <- predict(ridge_reg_cps, s = optimal_lambda, newx = yu_df_xdummies)
+
+# Combine the treatment and control groups into one dataframe
+both<-as.data.frame(rbind(control,treatment))
+
+# Regress the difference in log yearly earnings on the treatment group 
+ate<-lm(log_d_earn~treatment, data=both)
+# Summary statistics for the mean treatment effect
+summary(ate)
+
+# Get treatment effect by exponentiation of the coefficient of the treatment variable, which is in terms of log wage differences 
+exp(summary(ate)$coefficients[2,1])
+
+```
+
+The regression table shows that the difference in log earnings between t and t+1 is 0.470 for Year Up participants as compared to their counterfactual outcomes. We can convert this coefficient into the log odds ratio by taking the expectation, since our outcome is log(a)-log(b)=log(a/b) and get 1.60.
+Thus, there is a positive treatment effect of ~60% from the YU training program, i.e. the real yearly earnings of YU participants experience a 60% increase due to this training program, compared to what they otherwise would have got. 
+
+# Estimating Heterogeneous Treatment Effects for Subgroups 
+Rememeber that we are ultimately interested in whether certain subgroups in Year Up participants do better than others. We run one such subgroup analysis here here as an example, and then it will be up to you to investigate other potentially interesting subgroups. 
+
+## Treatment Effects by Gender
+
+There are two ways in which we can estimate treatment effects for different subgroups. The first version is to simply split the samples by gender and estimate their respective treatment effects. The second version is to estimate an interaction model, where we interact the treatment indicator with the gender variable. 
+
+Let's start with the first version: 
+
+### Estimating the Treatment Effect for Male participants
+
+```{r male_treat_effect}
+
+ate<-lm(log_d_earn~treatment, data=subset(both,sex==1))
+
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+```
+
+So it looks like men have a treatment effect of 52% increase in earnings thanks to Year Up. 
+
+
+### Estimating the Treatment Effect for Female participants
+```{r female_treat_effect}
+
+ate<-lm(log_d_earn~treatment, data=subset(both,sex==0))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+```
+Women on the other hand have an average increase of  71% in year over year earnings thanks to Year Up - that is quite a bit higher!
+
+### Estimating an Interaction Model
+With such a large difference, it is likely that the difference in treatment effects for men and women is statistically significant. The way to formally test this is to compute confidence intervals (estimate +/- 1.96*standard errorr) around the treatment point-estimates from the standard errors in both regressions, and see whether the confidence intervals overlap. If they do not, then the difference is statistically significant. However, there is also a more direct way to see whether the difference is statistically significant - we can run a joint regression of the whole sample, and interact the treatment effect with gender.  
+
+Because of the way our two samples of treatment and control are designed in our case, (i.e. "treatment" and "control" are the same individuals, just with different outcomes - actual and counterfactual) those two approaches will give the same results. This is because the averages in covarariates across the two samples are the same. In the overall average treatment effect regression, this means you can add all the controls you want, and the treatment effect would not change. 
+
+If covariates were not the same on average across treatment and control groups, for the subgroup and the interaction effect results to be the same, one would have to interact all included variables with the gender variable.  Here the two approaches are identical. The main advantage of the interaction model is that we can see directly whether the difference in treatment effects is statistically significant. 
+
+```{r interacted_treat_effect}
+
+ate<-lm(log_d_earn~treatment + sex*treatment+sex, data = both)
+
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+exp(summary(ate)$coefficients[3,1])
+exp(summary(ate)$coefficients[4,1])
+
+```
+
+
+First, we see that the treatment effect coefficient is the same as in our female only model. That is exactly right: the treatment effect coefficient is the effect of treatment when the interaction term is 0, which is the case when sex==0, i.e. for women. Next, we see that the treatment:sex interaction is negative and significant! Taking the treatment effect coefficient and subtracting the interaction term, we get 0.53794-0.12140=0.41654, which is exactly the male only coefficient from the separate model. Hence, we have recovered the same numbers and know that their difference is statistically significant!
+
+It looks like women have a lot larger returns than men from Year Up!  Why might that be and what is driving that? This is what we will try to uncover in the third tutorial. 
+
+**You should investigate whether there are other interesting heterogeneities by subgroups. Some potential groups you may wan to start with are race or location, but you can also think of other interesting subgroups!**
+
+
