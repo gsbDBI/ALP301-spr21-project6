@@ -1145,7 +1145,7 @@ ggplot(test_lm_grouped) +
 ```
 
 Now let us look at 20 bins:
-```{r rfcalibration_ntiles}
+```{r rfcalibration_ntiles_20}
 
 num_tiles <- 20
 test_lm$ntile <- factor(ntile(test_lm$log_d_earn_pred, n=num_tiles))
@@ -1169,7 +1169,7 @@ test_lm_grouped <- test_lm %>%
 ```
 
 Now let us look at 50 bins:
-```{r rfcalibration_ntiles}
+```{r rfcalibration_ntiles_50}
 
 num_tiles <- 50
 test_lm$ntile <- factor(ntile(test_lm$log_d_earn_pred, n=num_tiles))
