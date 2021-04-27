@@ -256,7 +256,7 @@ Before diving into any analysis, the first step is always to get to know one's s
 | region_large                            | 4 Regions                                      |
 
 ## Summary Statistics for the CPS data
-The summary statistics help us get a better understanding of the numerical variables in terms of their mean,median, standard deviation, lowest and highest values as well as lower and upper quartiles.
+The summary statistics help us get a better understanding of the numerical variables in terms of their mean, median, standard deviation, lowest and highest values as well as lower and upper quartiles.
 
 ```{r summary_stats,  message=FALSE, echo = TRUE}
 # Make a data.frame containing summary statistics of interest
