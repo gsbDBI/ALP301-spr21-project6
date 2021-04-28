@@ -161,6 +161,9 @@ yu_df_long<-reshape(yu_df, direction='long',
 ```
 
 
+
+
+
 ## Applying log transformation on wages and creation of outcome variable: change in log earnings
 We apply a log transformation on the pre and post real yearly earnings 1 and 2 (1 is pre and 2 is post), 'real_yearly_earnings_1' and 'real_yearly_earnings_2', such that the variable 'log_d_earn' is the log ratio of the 'real_yearly_earnings_2' to 'real_yearly_earnings_1' (i.e. log_d_earn = log(real_yearly_earnings_2/real_yearly_earnings_1)). This log transformation is appropriate because it deals with the positively skewed distribution of the yearly earnings variables. Also, note that while applying this log transformation, we add a delta of 0.001 to these real yearly earnings in order to prevent the log values from "exploding" and becoming NaNs in case the earnings have a value of 0.
 
@@ -372,9 +375,46 @@ kable_styling(summ_stats_table,
               full_width=FALSE)
 ```
 
+[RICKY] Compare YU and CPS data
+```{R YU_CPS comparison}
+cps_preprocessed<-fread("/cloud/project/Tutorials/Datasets/cps_df_preprocessed.csv")
+
+# Make a data.frame containing summary statistics of interest
+cps_dfsum<-cps_preprocessed %>% dplyr::select(d_earn, real_yearly_earnings_1, real_yearly_earnings_2, where(is.numeric), -c(RTIa, occ2010, cpsidp, county, cz, metfips))
+CPS_summ_stats <- fBasics::basicStats(cps_dfsum)
+CPS_summ_stats <- as.data.frame(t(CPS_summ_stats))
+# Rename some of the columns for convenience
+CPS_summ_stats <- CPS_summ_stats[c("Mean", "Stdev", "Minimum", "1. Quartile", "Median",  "3. Quartile", "Maximum")]
+colnames(CPS_summ_stats)[colnames(CPS_summ_stats) %in% c('1. Quartile', '3. Quartile')] <- c('Lower quartile', 'Upper quartile')
+rownames(CPS_summ_stats)[rownames(CPS_summ_stats) %in% c('real_yearly_earnings_1', 'real_yearly_earnings_2')] <- c('real_yearly_earnings.1_pre', 'real_yearly_earnings.2_post')
+
+```
+
+``` {r comparison}
+time_vec = c("Before", "After")
+CPS_type = c("CPS", "CPS")
+YU_type = c("YU", "YU")
+
+CPS_earnings <- CPS_summ_stats[c("real_yearly_earnings.1_pre", "real_yearly_earnings.2_post"), c("Mean", "Median")]
+CPS_earnings$time <- time_vec
+CPS_earnings$type <- CPS_type
+YU_earnings <- summ_stats[c("real_yearly_earnings.1_pre", "real_yearly_earnings.2_post"), c("Mean", "Median")]
+YU_earnings$time <- time_vec
+YU_earnings$type <- YU_type
+
+combined <- rbind(YU_earnings, CPS_earnings) 
+
+combined$time <- ordered(combined$time, levels = c("Before", "After"))
 
 
- 
+ggplot(data=combined, aes(x=time,y=Median, group=type, color=type)) +
+  geom_line() +
+  geom_point() + 
+  ggtitle("Change in Yearly Wages CPS v. Year-Up") +
+  xlab("") + 
+  ylab("Median (USD)")
+
+``` 
 
 ## Filtering Observations
 

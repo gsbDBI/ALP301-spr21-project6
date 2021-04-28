@@ -275,6 +275,13 @@ kable_styling(summ_stats_table,bootstrap_options=c("striped", "hover", "condense
               full_width=FALSE)
 ```
 
+[RICKY] Add data analysis portion
+```{r pre-processed_summary_cps}
+write.csv(cps_df,"/cloud/project/Tutorials/Datasets/cps_df_preprocessed.csv", row.names = FALSE)
+
+```
+
+
 ## Transform and pre-process the data
 
 Before building a wage prediction model by training it on the CPS data, we familiarize ourselves with the CPS data and investigate it for potential outliers that could impact the robustness of our wage prediction model. An easy way to perform initial outlier analysis is to plot a histogram of the variable of interest where we put the values of the variable of interest (or bins representing a range of values) on the x-axis and the count of observations for each value, or bin of values, on the y-axis. In this case, we plot histogram of the CPS data variables of interest `d_earn`, which is the yearly difference in wages, as well as `real_yearly_earnings_1` and `real_yearly_earnings_2`, which we use to compute the yearly earnings difference `d_earn`. We then observe the histograms to identify any potential outliers that would require further investigation.  
