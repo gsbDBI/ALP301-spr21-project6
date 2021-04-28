@@ -406,7 +406,6 @@ combined <- rbind(YU_earnings, CPS_earnings)
 
 combined$time <- ordered(combined$time, levels = c("Before", "After"))
 
-
 ggplot(data=combined, aes(x=time,y=Median, group=type, color=type)) +
   geom_line() +
   geom_point() + 
@@ -415,6 +414,22 @@ ggplot(data=combined, aes(x=time,y=Median, group=type, color=type)) +
   ylab("Median (USD)")
 
 ``` 
+
+
+```{r Angie chart}
+##Need to run Ricky's code chunks up until this one and also the 'Ricky' code chunk in the wage change model
+YU_pre_post <- yu_dfsum %>% 
+  group_by(sex) %>%
+  summarise(first_year=mean(real_yearly_earnings.1_pre),
+            second_year=mean(real_yearly_earnings.2_post))
+
+CPS_pre_post <- cps_dfsum %>%
+  group_by(sex) %>%
+  summarise(first_year=mean(real_yearly_earnings_1),
+            second_year=mean(real_yearly_earnings_2))
+
+ggplot()
+```
 
 ## Filtering Observations
 
