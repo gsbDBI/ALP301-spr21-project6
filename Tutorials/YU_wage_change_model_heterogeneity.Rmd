@@ -420,15 +420,27 @@ ggplot(data=combined, aes(x=time,y=Median, group=type, color=type)) +
 ##Need to run Ricky's code chunks up until this one and also the 'Ricky' code chunk in the wage change model
 YU_pre_post <- yu_dfsum %>% 
   group_by(sex) %>%
-  summarise(first_year=mean(real_yearly_earnings.1_pre),
-            second_year=mean(real_yearly_earnings.2_post))
+  summarise(first_year=median(real_yearly_earnings.1_pre),
+            second_year=median(real_yearly_earnings.2_post)) %>%
+  mutate(dataset="YU")
 
 CPS_pre_post <- cps_dfsum %>%
   group_by(sex) %>%
-  summarise(first_year=mean(real_yearly_earnings_1),
-            second_year=mean(real_yearly_earnings_2))
+  summarise(first_year=median(real_yearly_earnings_1),
+            second_year=median(real_yearly_earnings_2)) %>%
+  mutate(dataset="CPS")
 
-ggplot()
+combined_wide <- rbind(CPS_pre_post, YU_pre_post)
+
+combined_long <- combined_wide %>% 
+  gather(time, wage, -c(sex, dataset))
+
+combined_long$time <- ordered(combined_long$time, levels = c("first_year","second_year"), labels = c("Before", "After"))
+
+ggplot(combined_long, aes(time, wage, group=sex, color=sex)) +
+  geom_line() +
+  facet_grid(~dataset) +
+  free_y
 ```
 
 ## Filtering Observations
