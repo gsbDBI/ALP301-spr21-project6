@@ -275,13 +275,6 @@ kable_styling(summ_stats_table,bootstrap_options=c("striped", "hover", "condense
               full_width=FALSE)
 ```
 
-[RICKY] Add data analysis portion
-```{r pre-processed_summary_cps}
-write.csv(cps_df,"/cloud/project/Tutorials/Datasets/cps_df_preprocessed.csv", row.names = FALSE)
-
-```
-
-
 ## Transform and pre-process the data
 
 Before building a wage prediction model by training it on the CPS data, we familiarize ourselves with the CPS data and investigate it for potential outliers that could impact the robustness of our wage prediction model. An easy way to perform initial outlier analysis is to plot a histogram of the variable of interest where we put the values of the variable of interest (or bins representing a range of values) on the x-axis and the count of observations for each value, or bin of values, on the y-axis. In this case, we plot histogram of the CPS data variables of interest `d_earn`, which is the yearly difference in wages, as well as `real_yearly_earnings_1` and `real_yearly_earnings_2`, which we use to compute the yearly earnings difference `d_earn`. We then observe the histograms to identify any potential outliers that would require further investigation.  
@@ -412,6 +405,12 @@ ggplot(cps_df_filtered_2, aes(x=real_yearly_earnings_2)) +
 ```
 
 As can be seen from the histogram above, even though we only threw out ~8% of the total observations, the range of differences in the yearly earnings shrinks significantly as we filtered out observations that had much higher values than the rest of the observations. 
+
+[RICKY] Add data analysis portion
+```{r pre-processed_summary_cps}
+write.csv(cps_df_filtered_2,"/cloud/project/Tutorials/Datasets/cps_df_processed.csv", row.names = FALSE)
+
+```
 
 ## Apply log transformation on wage change, the dependent variable
 We apply a log transformation on the real yearly earnings 1 and 2, `real_yearly_earnings_1` and `real_yearly_earnings_2`, such that the variable `log_d_earn` is the log ratio of the 'real_yearly_earnings_2' to 'real_yearly_earnings_1' (i.e. log_d_earn = log(real_yearly_earnings_2/real_yearly_earnings_1)). This log transformation is appropriate because it deals with the positively skewed distribution of the yearly earnings variables. Also, note that it is always good practice to add a really small delta to variables before applying a log transformation in order to prevent the log values from "exploding" and becoming NaNs in case the variables have a value of 0. So, although we have filtered out the 0 values, we will still add a delta of 0.001 to the variables `real_yearly_earnings_1` and `real_yearly_earnings_2` for good practice.
