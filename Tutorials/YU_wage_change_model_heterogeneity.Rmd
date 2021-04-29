@@ -407,7 +407,6 @@ combined <- rbind(YU_earnings, CPS_earnings)
 
 combined$time <- ordered(combined$time, levels = c("Before", "After"))
 
-
 ggplot(data=combined, aes(x=time,y=Median, group=type, color=type)) +
   geom_line() +
   geom_point() + 
@@ -416,6 +415,42 @@ ggplot(data=combined, aes(x=time,y=Median, group=type, color=type)) +
   ylab("Median (USD)")
 
 ``` 
+
+
+```{r Angie chart}
+##Need to run Ricky's code chunks up until this one and also the 'Ricky' code chunk in the wage change model
+YU_pre_post <- yu_dfsum %>% 
+  group_by(sex) %>%
+  summarise(first_year=median(real_yearly_earnings.1_pre),
+            second_year=median(real_yearly_earnings.2_post)) %>%
+  mutate(dataset="YU")
+
+CPS_pre_post <- cps_dfsum %>%
+  group_by(sex) %>%
+  summarise(first_year=median(real_yearly_earnings_1),
+            second_year=median(real_yearly_earnings_2)) %>%
+  mutate(dataset="CPS")
+
+combined_wide <- rbind(CPS_pre_post, YU_pre_post)
+
+combined_long <- combined_wide %>% 
+  gather(time, wage, -c(sex, dataset)) %>%
+  mutate(Gender=ifelse(sex==1,"Male","Female")) 
+
+combined_long$time <- ordered(combined_long$time, levels = c("first_year","second_year"), labels = c("Before", "After"))
+combined_long$dataset <- ordered(combined_long$dataset, levels = c("YU","CPS"), labels = c("Year Up Data", "CPS Data"))
+
+example_plot <- ggplot(combined_long, aes(time, wage, group=Gender, color=Gender)) +
+  geom_line() +
+  facet_grid(~dataset, scale="free_y") +
+  theme_classic() +
+  ylab("Wage (Annual USD)") +
+  theme(axis.title.x = element_blank())
+
+direct.label(example_plot)
+
+ggsave("figure_1.png", width=6, height=3)
+```
 
 ## Filtering Observations
 
