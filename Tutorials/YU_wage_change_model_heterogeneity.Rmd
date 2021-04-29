@@ -381,6 +381,7 @@ cps_preprocessed<-fread("/cloud/project/Tutorials/Datasets/cps_df_preprocessed.c
 
 # Make a data.frame containing summary statistics of interest
 cps_dfsum<-cps_preprocessed %>% dplyr::select(d_earn, real_yearly_earnings_1, real_yearly_earnings_2, where(is.numeric), -c(RTIa, occ2010, cpsidp, county, cz, metfips))
+
 CPS_summ_stats <- fBasics::basicStats(cps_dfsum)
 CPS_summ_stats <- as.data.frame(t(CPS_summ_stats))
 # Rename some of the columns for convenience
