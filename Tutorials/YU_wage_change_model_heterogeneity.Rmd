@@ -161,6 +161,9 @@ yu_df_long<-reshape(yu_df, direction='long',
 ```
 
 
+
+
+
 ## Applying log transformation on wages and creation of outcome variable: change in log earnings
 We apply a log transformation on the pre and post real yearly earnings 1 and 2 (1 is pre and 2 is post), 'real_yearly_earnings_1' and 'real_yearly_earnings_2', such that the variable 'log_d_earn' is the log ratio of the 'real_yearly_earnings_2' to 'real_yearly_earnings_1' (i.e. log_d_earn = log(real_yearly_earnings_2/real_yearly_earnings_1)). This log transformation is appropriate because it deals with the positively skewed distribution of the yearly earnings variables. Also, note that while applying this log transformation, we add a delta of 0.001 to these real yearly earnings in order to prevent the log values from "exploding" and becoming NaNs in case the earnings have a value of 0.
 
@@ -372,9 +375,82 @@ kable_styling(summ_stats_table,
               full_width=FALSE)
 ```
 
+[RICKY] Compare YU and CPS data - BEFORE YU PROCESSED
+```{R YU_CPS comparison}
+cps_preprocessed<-fread("/cloud/project/Tutorials/Datasets/cps_df_preprocessed.csv")
+
+# Make a data.frame containing summary statistics of interest
+cps_dfsum<-cps_preprocessed %>% dplyr::select(d_earn, real_yearly_earnings_1, real_yearly_earnings_2, where(is.numeric), -c(RTIa, occ2010, cpsidp, county, cz, metfips))
+
+CPS_summ_stats <- fBasics::basicStats(cps_dfsum)
+CPS_summ_stats <- as.data.frame(t(CPS_summ_stats))
+# Rename some of the columns for convenience
+CPS_summ_stats <- CPS_summ_stats[c("Mean", "Stdev", "Minimum", "1. Quartile", "Median",  "3. Quartile", "Maximum")]
+colnames(CPS_summ_stats)[colnames(CPS_summ_stats) %in% c('1. Quartile', '3. Quartile')] <- c('Lower quartile', 'Upper quartile')
+rownames(CPS_summ_stats)[rownames(CPS_summ_stats) %in% c('real_yearly_earnings_1', 'real_yearly_earnings_2')] <- c('real_yearly_earnings.1_pre', 'real_yearly_earnings.2_post')
+
+```
+
+``` {r comparison}
+time_vec = c("Before", "After")
+CPS_type = c("CPS", "CPS")
+YU_type = c("YU", "YU")
+
+CPS_earnings <- CPS_summ_stats[c("real_yearly_earnings.1_pre", "real_yearly_earnings.2_post"), c("Mean", "Median")]
+CPS_earnings$time <- time_vec
+CPS_earnings$type <- CPS_type
+YU_earnings <- summ_stats[c("real_yearly_earnings.1_pre", "real_yearly_earnings.2_post"), c("Mean", "Median")]
+YU_earnings$time <- time_vec
+YU_earnings$type <- YU_type
+
+combined <- rbind(YU_earnings, CPS_earnings) 
+
+combined$time <- ordered(combined$time, levels = c("Before", "After"))
+
+ggplot(data=combined, aes(x=time,y=Median, group=type, color=type)) +
+  geom_line() +
+  geom_point() + 
+  ggtitle("Change in Yearly Wages CPS v. Year-Up") +
+  xlab("") + 
+  ylab("Median (USD)")
+
+``` 
 
 
- 
+```{r Angie chart}
+##Need to run Ricky's code chunks up until this one and also the 'Ricky' code chunk in the wage change model
+YU_pre_post <- yu_dfsum %>% 
+  group_by(sex) %>%
+  summarise(first_year=median(real_yearly_earnings.1_pre),
+            second_year=median(real_yearly_earnings.2_post)) %>%
+  mutate(dataset="YU")
+
+CPS_pre_post <- cps_dfsum %>%
+  group_by(sex) %>%
+  summarise(first_year=median(real_yearly_earnings_1),
+            second_year=median(real_yearly_earnings_2)) %>%
+  mutate(dataset="CPS")
+
+combined_wide <- rbind(CPS_pre_post, YU_pre_post)
+
+combined_long <- combined_wide %>% 
+  gather(time, wage, -c(sex, dataset)) %>%
+  mutate(Gender=ifelse(sex==1,"Male","Female")) 
+
+combined_long$time <- ordered(combined_long$time, levels = c("first_year","second_year"), labels = c("Before", "After"))
+combined_long$dataset <- ordered(combined_long$dataset, levels = c("YU","CPS"), labels = c("Year Up Data", "CPS Data"))
+
+example_plot <- ggplot(combined_long, aes(time, wage, group=Gender, color=Gender)) +
+  geom_line() +
+  facet_grid(~dataset, scale="free_y") +
+  theme_classic() +
+  ylab("Wage (Annual USD)") +
+  theme(axis.title.x = element_blank())
+
+direct.label(example_plot)
+
+ggsave("figure_1.png", width=6, height=3)
+```
 
 ## Filtering Observations
 
@@ -470,6 +546,99 @@ summary(yu_df$log_d_earn)
 # Plot the histograms for these variables
 ggplot(yu_df, aes(x=log_d_earn)) + 
   geom_histogram(bins = 100)
+```
+
+[RICKY] Compare YU and CPS data - Post-processed for both YU and CPS
+
+```{r YU_CPS comparison YU_load_and_summarize,  message=FALSE, echo = TRUE}
+
+# Make a data.frame containing summary statistics of interest
+yu_dfsum_processed<-yu_df %>% dplyr::select(log_d_earn, real_yearly_earnings.1_pre,real_yearly_earnings.2_post, where(is.numeric), -c(PACE_ID,value,RTIa, state_fips, fips, log_earnings.1_pre,log_earnings.2_post,cz, raw_earnings_pre,county_fips, metfips))
+summ_stats_yu_processed <- fBasics::basicStats(yu_dfsum_processed)
+summ_stats_yu_processed <- as.data.frame(t(summ_stats_yu_processed))
+# Rename some of the columns for convenience
+summ_stats_yu_processed <- summ_stats_yu_processed[c("Mean", "Stdev", "Minimum", "1. Quartile", "Median",  "3. Quartile", "Maximum")]
+colnames(summ_stats_yu_processed)[colnames(summ_stats_yu_processed) %in% c('1. Quartile', '3. Quartile')] <- c('Lower quartile', 'Upper quartile')
+
+```
+
+```{R YU_CPS comparison CPS_load_and_summarize}
+cps_processed<-fread("/cloud/project/Tutorials/Datasets/cps_df_processed.csv")
+
+# Make a data.frame containing summary statistics of interest
+cps_dfsum_processed<-cps_processed %>% dplyr::select(d_earn, real_yearly_earnings_1, real_yearly_earnings_2, where(is.numeric), -c(RTIa, occ2010, cpsidp, county, cz, metfips))
+
+CPS_summ_stats_processed <- fBasics::basicStats(cps_dfsum_processed)
+CPS_summ_stats_processed <- as.data.frame(t(CPS_summ_stats_processed))
+# Rename some of the columns for convenience
+CPS_summ_stats_processed <- CPS_summ_stats_processed[c("Mean", "Stdev", "Minimum", "1. Quartile", "Median",  "3. Quartile", "Maximum")]
+colnames(CPS_summ_stats_processed)[colnames(CPS_summ_stats_processed) %in% c('1. Quartile', '3. Quartile')] <- c('Lower quartile', 'Upper quartile')
+rownames(CPS_summ_stats_processed)[rownames(CPS_summ_stats_processed) %in% c('real_yearly_earnings_1', 'real_yearly_earnings_2')] <- c('real_yearly_earnings.1_pre', 'real_yearly_earnings.2_post')
+
+```
+
+``` {r comparison}
+time_vec = c("Before", "After")
+CPS_type = c("CPS", "CPS")
+YU_type = c("YU", "YU")
+
+CPS_earnings <- CPS_summ_stats_processed[c("real_yearly_earnings.1_pre", "real_yearly_earnings.2_post"), c("Mean", "Median")]
+CPS_earnings$time <- time_vec
+CPS_earnings$type <- CPS_type
+YU_earnings <- summ_stats_yu_processed[c("real_yearly_earnings.1_pre", "real_yearly_earnings.2_post"), c("Mean", "Median")]
+YU_earnings$time <- time_vec
+YU_earnings$type <- YU_type
+
+combined <- rbind(YU_earnings, CPS_earnings) 
+
+combined$time <- ordered(combined$time, levels = c("Before", "After"))
+
+ggplot(data=combined, aes(x=time,y=Median, group=type, color=type)) +
+  geom_line() +
+  geom_point() + 
+  ggtitle("Change in Yearly Wages CPS v. Year-Up") +
+  xlab("") + 
+  ylab("Median (USD)")
+
+``` 
+
+```{r Compare change }
+##Need to run Ricky's code chunks up until this one and also the 'Ricky' code chunk in the wage change model
+YU_pre_post <- yu_dfsum_processed %>% 
+  group_by(sex) %>%
+  summarise(first_year=median(real_yearly_earnings.1_pre),
+            second_year=median(real_yearly_earnings.2_post)) %>%
+  mutate(dataset="YU")
+
+CPS_pre_post <- cps_dfsum_processed %>%
+  group_by(sex) %>%
+  summarise(first_year=median(real_yearly_earnings_1),
+            second_year=median(real_yearly_earnings_2)) %>%
+  mutate(dataset="CPS")
+
+combined_wide <- rbind(CPS_pre_post, YU_pre_post)
+
+combined_long <- combined_wide %>% 
+  gather(time, wage, -c(sex, dataset)) %>%
+  mutate(Gender=ifelse(sex==1,"Male","Female")) 
+
+combined_long$time <- ordered(combined_long$time, levels = c("first_year","second_year"), labels = c("Before", "After"))
+combined_long$dataset <- ordered(combined_long$dataset, levels = c("YU","CPS"), labels = c("Year Up Data", "CPS Data"))
+
+example_plot <- ggplot(combined_long, aes(time, wage, group=Gender, color=Gender)) +
+  geom_line() +
+  facet_grid(~dataset, scale="free_y") +
+  theme_classic() +
+  ylab("Wage (Annual USD)") +
+  theme(axis.title.x = element_blank())
+
+direct.label(example_plot)
+
+ggsave("figure_2.png", width=6, height=3)
+```
+```{r  chart}
+#Here we compare the percentage
+
 ```
 
 
@@ -589,7 +758,7 @@ The regression table shows that the difference in log earnings between t and t+1
 Thus, there is a positive treatment effect of ~60% from the YU training program, i.e. the real yearly earnings of YU participants experience a 60% increase due to this training program, compared to what they otherwise would have got. 
 
 # Estimating Heterogeneous Treatment Effects for Subgroups 
-Rememeber that we are ultimately interested in whether certain subgroups in Year Up participants do better than others. We run one such subgroup analysis here here as an example, and then it will be up to you to investigate other potentially interesting subgroups. 
+Remember that we are ultimately interested in whether certain subgroups in Year Up participants do better than others. We run one such subgroup analysis here here as an example, and then it will be up to you to investigate other potentially interesting subgroups. 
 
 ## Treatment Effects by Gender
 
@@ -646,4 +815,58 @@ It looks like women have a lot larger returns than men from Year Up!  Why might 
 
 **You should investigate whether there are other interesting heterogeneities by subgroups. Some potential groups you may wan to start with are race or location, but you can also think of other interesting subgroups!**
 
+The previous tutorial stated that since some machine learning algorithms do poorly with many dummies, categorical variables like location were expressed as continuous variables that describe the characteristics of the location. This poses a hurdle to exploring heterogeneity by location. In order to explore the location dimension, we will try a few proxies for location, such as population and poverty rate. Unfortunately, this analysis produces coefficients that are hard to interpret. More work is needed to understand which is the proper proxy for location. In the future, we may also try to merge the location dummies back into the data for use in this step (perhaps try region_large?).
 
+```{r location_effect}
+ate<-lm(log_d_earn~treatment + cty_pop2000 + cty_pop2000*treatment, data = both)
+
+summary(ate)
+
+paste0("Coefficient on Treatment")
+exp(summary(ate)$coefficients[2,1])
+paste0("Coefficient on County Population in 2000")
+exp(summary(ate)$coefficients[3,1])
+paste0("Coefficient on Interaction")
+exp(summary(ate)$coefficients[4,1])
+
+ate<-lm(log_d_earn~treatment + poor_share + poor_share*treatment, data = both)
+
+summary(ate)
+
+paste0("Coefficient on Treatment")
+exp(summary(ate)$coefficients[2,1])
+paste0("Coefficient on Poverty Rate")
+exp(summary(ate)$coefficients[3,1])
+paste0("Coefficient on Interaction")
+exp(summary(ate)$coefficients[4,1])
+
+```
+
+Here, we explore heterogeneity by occupation. Similar to location, the occupation dummies are expressed as continuous variables. Once again, we use proxies for occupation - measures of how abstract and how manual the tasks in the occupation are. In general, more abstract tasks require a higher education level to accomplish. When we regress earnings using the measure of abstractness, we see that the coeffficient on the treatment and the measure of abstractness are both positive and significant, as we expect them to be. A Year Up applicant coming from a previous occupation that requires more abstract tasks will earn more on average. However, the coefficient on the interaction term is negative and significant. This implies that YearUp is less effective for applicants that come from occupations with more abstract tasks. A possible interpretation for this fact is that these "smarter" applicants would have been able to find lucrative jobs even without going through the program, so the value added of YearUp is low. 
+
+We try the same analysis using the measure for how manual the tasks in an occupation are. We assume that occupations with a higher manual score requires less education, so we expect individuals coming from these jobs to benefit significantly from the program. In regression terms, this would translate to a positive interaction term. Running the regression, we find that the interaction term is negative, but not significant. More research is needed to understand these measures, and why the coefficient on the manual measure interaction term is not in the expected direction. Additionally, we hope to find a more systematic way to explore heterogeneity, in order to avoid issues with cherry picking.
+
+```{r occupation_effect}
+ate<-lm(log_d_earn~treatment + task_abstract + task_abstract*treatment, data = both)
+
+summary(ate)
+
+paste0("Coefficient on Treatment")
+exp(summary(ate)$coefficients[2,1])
+paste0("Coefficient on Abstract Task Measure")
+exp(summary(ate)$coefficients[3,1])
+paste0("Coefficient on Interaction")
+exp(summary(ate)$coefficients[4,1])
+
+ate<-lm(log_d_earn~treatment + task_manual + task_manual*treatment, data = both)
+
+summary(ate)
+
+paste0("Coefficient on Treatment")
+exp(summary(ate)$coefficients[2,1])
+paste0("Coefficient on Manual Task Measure")
+exp(summary(ate)$coefficients[3,1])
+paste0("Coefficient on Interaction")
+exp(summary(ate)$coefficients[4,1])
+
+```

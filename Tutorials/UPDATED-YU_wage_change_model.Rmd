@@ -256,7 +256,7 @@ Before diving into any analysis, the first step is always to get to know one's s
 | region_large                            | 4 Regions                                      |
 
 ## Summary Statistics for the CPS data
-The summary statistics help us get a better understanding of the numerical variables in terms of their mean,median, standard deviation, lowest and highest values as well as lower and upper quartiles.
+The summary statistics help us get a better understanding of the numerical variables in terms of their mean, median, standard deviation, lowest and highest values as well as lower and upper quartiles.
 
 ```{r summary_stats,  message=FALSE, echo = TRUE}
 # Make a data.frame containing summary statistics of interest
@@ -405,6 +405,12 @@ ggplot(cps_df_filtered_2, aes(x=real_yearly_earnings_2)) +
 ```
 
 As can be seen from the histogram above, even though we only threw out ~8% of the total observations, the range of differences in the yearly earnings shrinks significantly as we filtered out observations that had much higher values than the rest of the observations. 
+
+[RICKY] Add data analysis portion
+```{r pre-processed_summary_cps}
+write.csv(cps_df_filtered_2,"/cloud/project/Tutorials/Datasets/cps_df_processed.csv", row.names = FALSE)
+
+```
 
 ## Apply log transformation on wage change, the dependent variable
 We apply a log transformation on the real yearly earnings 1 and 2, `real_yearly_earnings_1` and `real_yearly_earnings_2`, such that the variable `log_d_earn` is the log ratio of the 'real_yearly_earnings_2' to 'real_yearly_earnings_1' (i.e. log_d_earn = log(real_yearly_earnings_2/real_yearly_earnings_1)). This log transformation is appropriate because it deals with the positively skewed distribution of the yearly earnings variables. Also, note that it is always good practice to add a really small delta to variables before applying a log transformation in order to prevent the log values from "exploding" and becoming NaNs in case the variables have a value of 0. So, although we have filtered out the 0 values, we will still add a delta of 0.001 to the variables `real_yearly_earnings_1` and `real_yearly_earnings_2` for good practice.
