@@ -520,7 +520,7 @@ cols_reg = c(control_vars,  'log_d_earn')
 dummies <- dummyVars(log_d_earn ~ ., data = yu_df[,cols_reg])
 yu_df_dummies = predict(dummies, newdata = yu_df[,cols_reg])
 
-# Manually create one missing category
+# Manually create one missing category 
 yu_df_dummies <- as.data.frame(yu_df_dummies)
 yu_df_dummies <-yu_df_dummies %>% mutate(year.2006=0)
 
@@ -573,6 +573,7 @@ control$log_d_earn <- predict(ridge_reg_cps, s = optimal_lambda, newx = yu_df_xd
 
 # Combine the treatment and control groups into one dataframe
 both<-as.data.frame(rbind(control,treatment))
+saveRDS(both, file = "yu_treatment_control.rds")
 
 # Regress the difference in log yearly earnings on the treatment group 
 ate<-lm(log_d_earn~treatment, data=both)
