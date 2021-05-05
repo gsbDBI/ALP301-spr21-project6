@@ -377,7 +377,7 @@ kable_styling(summ_stats_table,
 
 [RICKY] Compare YU and CPS data - BEFORE YU PROCESSED
 ```{R YU_CPS comparison}
-cps_preprocessed<-fread("/cloud/project/Tutorials/Datasets/cps_df_processed.csv")
+cps_preprocessed<-fread("/cloud/project/Tutorials/Datasets/cps_df_preprocessed.csv")
 
 # Make a data.frame containing summary statistics of interest
 cps_dfsum<-cps_preprocessed %>% dplyr::select(d_earn, real_yearly_earnings_1, real_yearly_earnings_2, where(is.numeric), -c(RTIa, occ2010, cpsidp, county, cz, metfips))
@@ -403,15 +403,15 @@ YU_earnings <- summ_stats[c("real_yearly_earnings.1_pre", "real_yearly_earnings.
 YU_earnings$time <- time_vec
 YU_earnings$type <- YU_type
 
-combined <- rbind(YU_earnings, CPS_earnings)
+combined <- rbind(YU_earnings, CPS_earnings) 
 
 combined$time <- ordered(combined$time, levels = c("Before", "After"))
 
 ggplot(data=combined, aes(x=time,y=Median, group=type, color=type)) +
   geom_line() +
-  geom_point() +
+  geom_point() + 
   ggtitle("Change in Yearly Wages CPS v. Year-Up") +
-  xlab("") +
+  xlab("") + 
   ylab("Median (USD)")
 
 ``` 
@@ -419,7 +419,7 @@ ggplot(data=combined, aes(x=time,y=Median, group=type, color=type)) +
 
 ```{r Angie chart}
 ##Need to run Ricky's code chunks up until this one and also the 'Ricky' code chunk in the wage change model
-YU_pre_post <- yu_dfsum %>%
+YU_pre_post <- yu_dfsum %>% 
   group_by(sex) %>%
   summarise(first_year=median(real_yearly_earnings.1_pre),
             second_year=median(real_yearly_earnings.2_post)) %>%
@@ -433,9 +433,9 @@ CPS_pre_post <- cps_dfsum %>%
 
 combined_wide <- rbind(CPS_pre_post, YU_pre_post)
 
-combined_long <- combined_wide %>%
+combined_long <- combined_wide %>% 
   gather(time, wage, -c(sex, dataset)) %>%
-  mutate(Gender=ifelse(sex==1,"Male","Female"))
+  mutate(Gender=ifelse(sex==1,"Male","Female")) 
 
 combined_long$time <- ordered(combined_long$time, levels = c("first_year","second_year"), labels = c("Before", "After"))
 combined_long$dataset <- ordered(combined_long$dataset, levels = c("YU","CPS"), labels = c("Year Up Data", "CPS Data"))
@@ -842,58 +842,11 @@ exp(summary(ate)$coefficients[4,1])
 
 ```
 
-Here we try to see whether there is meaningful heterogeneity using the region_large variable, which is a proxy for the size of a region. It looks like the largest treatment effect occurs in the largest regions (region_large = 4), although the treatment effect does not increase monotonically in region size. Seeing that observations with region_large = 4 have a much larger treatment effect, we run a regression with treatment, a dummy for region_large=4, and the interaction. The interaction term is positive and significant. This indicates that individuals in region_large=4 may benefit the most from YearUp. 
-
-```{r location_effect}
-ate<-lm(log_d_earn~treatment, data=subset(both, region_large==1))
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-
-ate<-lm(log_d_earn~treatment, data=subset(both, region_large==2))
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-
-ate<-lm(log_d_earn~treatment, data=subset(both, region_large==3))
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-
-ate<-lm(log_d_earn~treatment, data=subset(both, region_large==4))
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-
-both$is_region_large_4 <- both$region_large == 4
-ate<-lm(log_d_earn~treatment + is_region_large_4 + is_region_large_4*treatment, data = both)
-
-summary(ate)
-
-paste0("Coefficient on Treatment")
-exp(summary(ate)$coefficients[2,1])
-paste0("Coefficient on Dummy for region_large=4")
-exp(summary(ate)$coefficients[3,1])
-paste0("Coefficient on Interaction")
-exp(summary(ate)$coefficients[4,1])
-```
-
-
 Here, we explore heterogeneity by occupation. Similar to location, the occupation dummies are expressed as continuous variables. Once again, we use proxies for occupation - measures of how abstract and how manual the tasks in the occupation are. In general, more abstract tasks require a higher education level to accomplish. When we regress earnings using the measure of abstractness, we see that the coeffficient on the treatment and the measure of abstractness are both positive and significant, as we expect them to be. A Year Up applicant coming from a previous occupation that requires more abstract tasks will earn more on average. However, the coefficient on the interaction term is negative and significant. This implies that YearUp is less effective for applicants that come from occupations with more abstract tasks. A possible interpretation for this fact is that these "smarter" applicants would have been able to find lucrative jobs even without going through the program, so the value added of YearUp is low. 
 
 We try the same analysis using the measure for how manual the tasks in an occupation are. We assume that occupations with a higher manual score requires less education, so we expect individuals coming from these jobs to benefit significantly from the program. In regression terms, this would translate to a positive interaction term. Running the regression, we find that the interaction term is negative, but not significant. More research is needed to understand these measures, and why the coefficient on the manual measure interaction term is not in the expected direction. Additionally, we hope to find a more systematic way to explore heterogeneity, in order to avoid issues with cherry picking.
 
 ```{r occupation_effect}
-cutoff <- median(both$task_abstract)
-ate<-lm(log_d_earn~treatment, data=subset(both, task_abstract<cutoff))
-
-summary(ate)
-paste0("Treatment effect for low abstract task measure")
-exp(summary(ate)$coefficients[2,1])
-
-ate<-lm(log_d_earn~treatment, data=subset(both, task_abstract>=cutoff))
-
-summary(ate)
-paste0("Treatment effect for high abstract task measure")
-exp(summary(ate)$coefficients[2,1])
-
-
 ate<-lm(log_d_earn~treatment + task_abstract + task_abstract*treatment, data = both)
 
 summary(ate)
@@ -918,11 +871,169 @@ exp(summary(ate)$coefficients[4,1])
 
 ```
 
-```{r added interaction effects}
-test_1 <-lm(log_d_earn~treatment + task_abstract + sex + occ1digit, data = both)
-summary(test_1)
+## Treatment Effects by Race
 
-test_2 <-lm(log_d_earn~(treatment + task_abstract + sex + occ1digit)^2, data = both)
-summary(test_2)
+#count
+race_white =  46
+race_asian  = 103
+race_black =  459
+race_other/not listed = 1083 - 46 - 103 - 459 = 475
+
+
+```{r race_effect}
+#White
+
+ate<-lm(log_d_earn~treatment, data=subset(both,race_white==1))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+#Asian
+
+ate<-lm(log_d_earn~treatment, data=subset(both,race_asian==1))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+#Black
+
+ate<-lm(log_d_earn~treatment, data=subset(both,race_black==1))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+#Non-Black
+ate<-lm(log_d_earn~treatment, data=subset(both,race_black==0))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+#Interaction Terms
+
+#White
+
+ate<-lm(log_d_earn~treatment + race_white*treatment+race_white, data = both)
+
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+exp(summary(ate)$coefficients[3,1])
+exp(summary(ate)$coefficients[4,1])
+
+#Asian
+
+ate<-lm(log_d_earn~treatment + race_asian*treatment+race_asian, data = both)
+
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+exp(summary(ate)$coefficients[3,1])
+exp(summary(ate)$coefficients[4,1])
+
+#Black
+
+ate<-lm(log_d_earn~treatment + race_black*treatment+race_black, data = both)
+
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+exp(summary(ate)$coefficients[3,1])
+exp(summary(ate)$coefficients[4,1])
+
 ```
+
+#Age Effect
+
+## Treatment Effects by Age
+
+median(treatment$age) = -1.634626 = Age 19
+mean(treatment$age) = -1.63576 = Age 19
+
+#count
+table(treatment$age < -1.634626) = 730
+table(treatment$age > -1.634626)  = 402
+
+```{r age_effect}
+
+# Age of < -1.6 should be close to median of 19 years of age or less
+ate<-lm(log_d_earn~treatment, data=subset(both, age < -1.634626))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+# Age of > -1.6 should be close to median of 19 years of age or more 
+ate<-lm(log_d_earn~treatment, data=subset(both, age > -1.634626))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+#Interaction Terms
+
+ate<-lm(log_d_earn~treatment + age*treatment+age, data = both)
+
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+exp(summary(ate)$coefficients[3,1])
+exp(summary(ate)$coefficients[4,1])
+
+```
+
+## Treatment Effects by Years of Education
+
+#Count
+12 years of education = 764
+14 years of education = 368
+
+```{r education_effect}
+
+#12 years of education
+ate<-lm(log_d_earn~treatment, data=subset(both,edu_num < 0))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+#14 years of education
+ate<-lm(log_d_earn~treatment, data=subset(both,edu_num > 0))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+#Interaction Terms
+ate<-lm(log_d_earn~treatment + edu_num*treatment+edu_num, data = both)
+
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+exp(summary(ate)$coefficients[3,1])
+exp(summary(ate)$coefficients[4,1])
+```
+## Treatment Effects by Years of Experiences
+
+#Count
+3+ years of experience = 612
+<3 years of experience = 520
+
+```{r experience_effect}
+
+# > or = 3 years of experience 
+ate<-lm(log_d_earn~treatment, data=subset(both,experience > -1.38456474221906))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+# < 3 years of experience 
+ate<-lm(log_d_earn~treatment, data=subset(both,experience < -1.38456474221906))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+#Interaction Terms
+ate<-lm(log_d_earn~treatment + experience*treatment+experience, data = both)
+
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+exp(summary(ate)$coefficients[3,1])
+exp(summary(ate)$coefficients[4,1])
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
