@@ -917,3 +917,12 @@ paste0("Coefficient on Interaction")
 exp(summary(ate)$coefficients[4,1])
 
 ```
+
+```{r added interaction effects}
+test_1 <-lm(log_d_earn~treatment + task_abstract + sex + occ1digit, data = both)
+summary(test_1)
+
+test_2 <-lm(log_d_earn~(treatment + task_abstract + sex + occ1digit)^2, data = both)
+summary(test_2)
+```
+
