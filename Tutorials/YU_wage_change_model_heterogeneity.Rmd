@@ -378,7 +378,7 @@ kable_styling(summ_stats_table,
 
 [RICKY] Compare YU and CPS data - BEFORE YU PROCESSED
 ```{R YU_CPS comparison}
-cps_preprocessed<-fread("/cloud/project/Tutorials/Datasets/cps_df_preprocessed.csv")
+cps_preprocessed<-fread("/cloud/project/Tutorials/Datasets/cps_df_processed.csv")
 
 # Make a data.frame containing summary statistics of interest
 cps_dfsum<-cps_preprocessed %>% dplyr::select(d_earn, real_yearly_earnings_1, real_yearly_earnings_2, where(is.numeric), -c(RTIa, occ2010, cpsidp, county, cz, metfips))
@@ -1024,7 +1024,65 @@ exp(summary(ate)$coefficients[4,1])
 
 ```
 
+```{r cohort_effect}
 
+#Interaction Terms
+ate<-lm(log_d_earn~treatment + Cohort*treatment+Cohort, data = both)
+
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+exp(summary(ate)$coefficients[3,1])
+exp(summary(ate)$coefficients[4,1])
+
+# January start date
+ate<-lm(log_d_earn~treatment, data=subset(both,Cohort<"Jan."))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+# July start date 
+ate<-lm(log_d_earn~treatment, data=subset(both,Cohort>"Jan."))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+```
+
+```{r starting income_effect}
+
+#Count of quartiles
+length(which(treatment$real_yearly_earnings.1_pre<16853))
+length(which(treatment$real_yearly_earnings.1_pre>16853&treatment$real_yearly_earnings.1_pre<18709))
+length(which(treatment$real_yearly_earnings.1_pre<21675&treatment$real_yearly_earnings.1_pre>18709))
+length(which(treatment$real_yearly_earnings.1_pre<21675))
+
+# First quartile
+ate<-lm(log_d_earn~treatment, data=subset(both,real_yearly_earnings.1_pre<16853))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+#Second quartile
+ate<-lm(log_d_earn~treatment, data=subset(both,real_yearly_earnings.1_pre>16853&real_yearly_earnings.1_pre<18709))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+#Third quartile
+ate<-lm(log_d_earn~treatment, data=subset(both,real_yearly_earnings.1_pre<21675&real_yearly_earnings.1_pre>18709))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+#Fourth quartile
+ate<-lm(log_d_earn~treatment, data=subset(both,real_yearly_earnings.1_pre<21675))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+#Interaction Terms
+ate<-lm(log_d_earn~treatment + real_yearly_earnings.1_pre*treatment + real_yearly_earnings.1_pre, data = both)
+
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+exp(summary(ate)$coefficients[3,1])
+exp(summary(ate)$coefficients[4,1])
+
+ate<-lm(log_d_earn~treatment + Cohort*treatment+Cohort, data = both)
+```
 
 
 
