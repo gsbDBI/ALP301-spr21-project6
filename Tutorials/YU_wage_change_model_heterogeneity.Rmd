@@ -81,6 +81,8 @@ We begin by reading in the Year Up data. It comes in two separate files: the rec
 Since our wage prediction model in the CPS uses these additional variables, we also need them in this dataset. 
 
 ```{r read_data}
+data_folder <- "Datasets"
+save_folder <- "intermediate"
 
 # Load the pre- and post-YU data
 df_post<-fread("Datasets/20210119_YU_post_data.csv") #post Year Up records on individuals
@@ -115,11 +117,14 @@ We first merge the pre- and post-YU data together by the person id (PACE_ID). Th
 ```{r merge_data}
 
 # Merge the pre- and post-YU data
-yu_df<-merge(df_post,df_pre, by=c("PACE_ID", "Gender", "Race", "Age_at_Start_of_Cohort", "State", "Site", "Edu"), all.x = FALSE, all.y = FALSE)
-yu_df<-yu_df %>% distinct(PACE_ID, .keep_all = TRUE) #there are a few duplicate pace_ids, which should not be the case - we drop them. 
+yu_df <- merge(df_post, df_pre, 
+               by=c("PACE_ID", "Gender", "Race", "Age_at_Start_of_Cohort", 
+                    "State", "Site", "Edu"), 
+               all.x = FALSE, all.y = FALSE)
+yu_df <- yu_df %>% distinct(PACE_ID, .keep_all = TRUE) #there are a few duplicate pace_ids, which should not be the case - we drop them. 
 
 # Rename YU data to have the same names and encodings and CPS data. 
-yu_df<-yu_df %>%
+yu_df <- yu_df %>%
   mutate(sex=Male_Flag,
          year_pre=Year-1,
          year_post=Year,
@@ -135,23 +140,23 @@ yu_df<-yu_df %>%
          experience2=experience^2)
 
 # Unify naming for pre and post YU jobs and earnings
-yu_df<-yu_df %>%
+yu_df <- yu_df %>%
   mutate(occ_onet_pre=ONET_4_Job_preYU,
          earnings_pre=ONET_4_Salary_pre_YU,
          occ_onet_post=ONETCode_post_YU,
          earnings_post=SAL_YU_POSTYU)
 
 # keep only variables of interest
-yu_df <-yu_df%>%
+yu_df <- yu_df%>%
   select(PACE_ID,Site,Cohort, sex, race_white, 
          race_asian, race_black, edu_num, experience, experience2,
          year_pre, age_pre,age2_pre, occ_onet_pre,earnings_pre,
          year_post,age_post, age2_post,occ_onet_post,earnings_post)
 
 
-# rehape data from wide to "long", so that we have two entries per individual, pre and post.   
+# reshape data from wide to "long", so that we have two entries per individual, pre and post.   
 yu_df_long<-reshape(yu_df, direction='long', 
-                    varying=c("age_pre","age2_pre", "earnings_pre","occ_onet_pre","year_pre",
+                    varying=c("age_pre", "age2_pre", "earnings_pre","occ_onet_pre","year_pre",
                                "age_post", "age2_post","earnings_post", "occ_onet_post", "year_post"),
                     timevar='prepost',
                     times=c('1_pre', '2_post'),
@@ -159,10 +164,6 @@ yu_df_long<-reshape(yu_df, direction='long',
                     idvar='PACE_ID')
 
 ```
-
-
-
-
 
 ## Applying log transformation on wages and creation of outcome variable: change in log earnings
 We apply a log transformation on the pre and post real yearly earnings 1 and 2 (1 is pre and 2 is post), 'real_yearly_earnings_1' and 'real_yearly_earnings_2', such that the variable 'log_d_earn' is the log ratio of the 'real_yearly_earnings_2' to 'real_yearly_earnings_1' (i.e. log_d_earn = log(real_yearly_earnings_2/real_yearly_earnings_1)). This log transformation is appropriate because it deals with the positively skewed distribution of the yearly earnings variables. Also, note that while applying this log transformation, we add a delta of 0.001 to these real yearly earnings in order to prevent the log values from "exploding" and becoming NaNs in case the earnings have a value of 0.
@@ -663,8 +664,8 @@ yu_df[ ,categorical] <- lapply(yu_df[ , categorical] , factor)
 ```{r load_cps}
 
 # Load the CPS variables from memory
-vars <- readRDS("vars.rds")
-cont<- vars %>%dplyr::select(-c(year, region_large, sex, race_white, 
+vars <- readRDS(paste(save_folder, "vars.rds", sep="/"))
+cont <- vars %>% dplyr::select(-c(year, region_large, sex, race_white, 
                                 race_black, race_asian)) # picking continous variables by exclduing the few categorical variables
 
 # Select the variables from the YU data that match the ones from the CPS data
@@ -673,7 +674,7 @@ class(yu_df)<-class(as.data.frame(yu_df))
 
 # Load the preprocessed CPS data from memory because we preprocess the YU data
 # using the CPS training data preprocessing parameters
-pre_proc_val <- readRDS("pre_proc_val.rds")
+pre_proc_val <- readRDS(paste(save_folder, "pre_proc_val.rds", sep="/"))
 yu_df[,cont] = predict(pre_proc_val, yu_df[,cont])
 
 ```
@@ -694,7 +695,7 @@ yu_df_dummies <- as.data.frame(yu_df_dummies)
 yu_df_dummies <-yu_df_dummies %>% mutate(year.2006=0)
 
 # Make sure columns are in same order across the CPS and YU datasets
-cols <- readRDS("cols.rds")
+cols <- readRDS(paste(save_folder, "cols.rds", sep="/"))
 yu_df_dummies <-yu_df_dummies %>% select(cols)
 
 ```
@@ -709,7 +710,7 @@ We summarize the predicted values.
 ```{r ridge_yu_preds}
 
 # Load the ridge regression model & optimal lambda from memory
-load("ridge_reg_cps.rda")
+load(paste(save_folder, "ridge_reg_cps.rda", sep="/"))
 
 # Use ridge optimal lambda obtained from the model building tutorial
 optimal_lambda <- 0.001
@@ -734,15 +735,15 @@ Now that we have the actual yearly earning changes of Year Up participants as we
 treatment<-yu_df %>% mutate(treatment=1)
 
 # Define the control group in YU data
-control<-yu_df%>% mutate(treatment=0)
-control<-control %>% select(-log_d_earn)
+control<- yu_df %>% mutate(treatment=0)
+control<- control %>% select(-log_d_earn)
 
 # Predict the difference in log yearly earnings for observations in the control group
 control$log_d_earn <- predict(ridge_reg_cps, s = optimal_lambda, newx = yu_df_xdummies)
 
 # Combine the treatment and control groups into one dataframe
 both<-as.data.frame(rbind(control,treatment))
-saveRDS(both, file = "yu_treatment_control.rds")
+saveRDS(both, file = paste(save_folder, "yu_treatment_control.rds", sep="/") )
 
 # Regress the difference in log yearly earnings on the treatment group 
 ate<-lm(log_d_earn~treatment, data=both)

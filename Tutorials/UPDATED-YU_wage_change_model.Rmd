@@ -98,22 +98,25 @@ In addition to the CPS data, we will be enriching the dataset by merging auxilla
 The auxillary occupation data stems from Autor and Dorn’s 2013 paper: “The Growth of Low-Skill Service Jobs and the Polarization of the US Labor Market” and described the routine, manual and abstract task intensity of occupations. More information about the data can be found [here](https://www.ddorn.net/data.htm). The auxillary location data comes from “Neighborhood Characteristics by County” in Opportunity Insight’s data library which can be found [here](https://opportunityinsights.org/data/).
 
 ```{r read_data}
+data_folder <- "Datasets"
+save_folder <- "intermediate"
+
 # Load CPS data
-cps_7018<-fread("Datasets/cps_7018_wide_earn.csv")
+cps_7018 <- fread(paste(data_folder, "cps_7018_wide_earn.csv", sep="/"))
 
 # Load task data
-tasks<-fread("Datasets/tasks_1990dd.csv")
+tasks<-fread(paste(data_folder, "tasks_1990dd.csv", sep="/"))
 
 # Load county-level data
-county_vars<-fread("Datasets/count_level_covars.csv")
+county_vars <- fread(paste(data_folder, "count_level_covars.csv", sep="/"))
 
 # Select the relevant county variables to be merged with the CPS data
 county_vars<-county_vars %>%
   select(cty, county_name, cty_pop2000, cz, cz_name, cz_pop2000, intersects_msa, cs00_seg_inc, cs00_seg_inc_pov25, cs00_seg_inc_aff75, cs_race_theil_2000, gini99, poor_share, inc_share_1perc, frac_middleclass, rel_tot, cs_frac_black, cs_frac_hisp, unemp_rate, pop_d_2000_1980, lf_d_2000_1980, cs_labforce, cs_elf_ind_man, cs_born_foreign, mig_inflow, mig_outflow, pop_density, frac_traveltime_lt15, hhinc00, median_house_value, cs_educ_ba, cs_fam_wkidsinglemom, crime_total, subcty_exp_pc, taxrate, tax_st_diff_top20)
 
 # Merge county variables with the CPS and task data
-cps_7018<- merge(cps_7018,county_vars, by.x="county_1", by.y = "cty")
-cps_7018<- merge(tasks,cps_7018,by.x="occ1990", by.y="occ1990_1")
+cps_7018 <- merge(cps_7018,county_vars, by.x="county_1", by.y = "cty")
+cps_7018 <- merge(tasks,cps_7018,by.x="occ1990", by.y="occ1990_1")
 
 # Filter out observations dating before 2005 
 cps_7018 <- cps_7018  %>% 
@@ -506,7 +509,7 @@ vars<- cps_df_log %>%
          median_house_value,,cs_educ_ba,
          cs_fam_wkidsinglemom,crime_total,subcty_exp_pc,
          taxrate,tax_st_diff_top20)
-saveRDS(vars, file = "vars.rds")
+saveRDS(vars, file = paste(save_folder, "vars.rds", sep="/"))
 
 # Store the names of the variables used in the wage prediction model as they will come handy when adding new ones
 col_vars<-colnames(vars)
@@ -541,8 +544,8 @@ cps_df_log_train_unscaled <- cps_df_log_train
 cps_df_log_test_unscaled <- cps_df_log_test
 
 # Save the unscaled training and test sets as we will need them to build wage prediction model for subgroups in a different tutorial
-saveRDS(cps_df_log_train_unscaled, file = "cps_df_log_train_unscaled.rds")
-saveRDS(cps_df_log_test_unscaled, file = "cps_df_log_test_unscaled.rds")
+#saveRDS(cps_df_log_train_unscaled, file = "cps_df_log_train_unscaled.rds")
+#saveRDS(cps_df_log_test_unscaled, file = "cps_df_log_test_unscaled.rds")
 
 # Select continuous variables to be scaled
 cont<-vars %>%select(-c(year, 
@@ -554,9 +557,9 @@ cont<-c(colnames(cont))
 pre_proc_val <- preProcess(cps_df_log_train[,cont], method = c("center", "scale"))
 
 # Save the continuous variables' names (will be used to standardize the YU continous variables)
-saveRDS(cont, file = "cont.rds")
+#saveRDS(cont, file = paste(save_folder, "cont.rds", sep="/"))
 # Save the standardization parameters as we will also apply them on the YU data 
-saveRDS(pre_proc_val, file = "pre_proc_val.rds")
+saveRDS(pre_proc_val, file = paste(save_folder, "pre_proc_val.rds", sep="/"))
 
 # Standardize the continuous variables of the training and test sets by applying the 'pre_proc_val' parameters above
 cps_df_log_train[,cont] = predict(pre_proc_val, cps_df_log_train[,cont])
@@ -576,17 +579,17 @@ cps_log_train_dummies_unscaled = predict(dummies, newdata = cps_df_log_train_uns
 cps_log_test_dummies_unscaled = predict(dummies, newdata = cps_df_log_test_unscaled[,cols_reg])
 
 # Save the scaled training and test sets dummies as we will need them to perform calibration analysis in a different tutorial
-saveRDS(cps_log_train_dummies, file = "cps_log_train_dummies.rds")
-saveRDS(cps_log_test_dummies, file = "cps_log_test_dummies.rds")
+#saveRDS(cps_log_train_dummies, file = "cps_log_train_dummies.rds")
+#saveRDS(cps_log_test_dummies, file = "cps_log_test_dummies.rds")
 
 # Save the unscaled training and test sets dummies as we will need them to build wage prediction model for subgroups in a different tutorial
-saveRDS(cps_log_train_dummies_unscaled, file = "cps_log_train_dummies_unscaled.rds")
-saveRDS(cps_log_test_dummies_unscaled, file = "cps_log_test_dummies_unscaled.rds")
+#saveRDS(cps_log_train_dummies_unscaled, file = "cps_log_train_dummies_unscaled.rds")
+#saveRDS(cps_log_test_dummies_unscaled, file = "cps_log_test_dummies_unscaled.rds")
 
 cols<-colnames(cps_log_train_dummies)
 
 # Save column names to be used in a different tutorial to ensure columns are in the same order across the CPS and YU datasets
-saveRDS(cols, file = "cols.rds")
+saveRDS(cols, file = paste(save_folder, "cols.rds", sep="/"))
 
 ```
 
@@ -768,7 +771,7 @@ model1<-lm(lm1, data = train_lm)
 summary(model1)
 
 # Save the linear model to be used in a different tutorial for predicting on YU data
-save(model1, file = "lm_reg_cps.rda")
+#save(model1, file = paste(save_folder, "lm_reg_cps.rda", sep="/") )
 
 ```
 
@@ -812,7 +815,7 @@ lambdas <- 10^seq(2, -3, by = -.1)
 ridge_reg_cps = glmnet(x, y_train, nlambda = 25, alpha = 0, lambda = lambdas, standardize=TRUE)
 
 # Save ridge model to be used in a different tutorial for YU predictions
-save(ridge_reg_cps, file = "ridge_reg_cps.rda")
+save(ridge_reg_cps, file = paste(save_folder, "ridge_reg_cps.rda", sep="/"))
 
 # Perform cross-validation to obtain the optimal lambda
 cv_ridge <- cv.glmnet(x, y_train, alpha = 0, lambda = lambdas)
@@ -862,7 +865,7 @@ lambdas <- 10^seq(2, -3, by = -.1)
 lasso_reg_cps <- glmnet(x, y_train, alpha = 1, lambda = optimal_lambda, standardize = TRUE)
 
 # Save lasso model to to be used in a different tutorial for YU predictions
-save(lasso_reg_cps, file = "lasso_reg_cps.rda")
+#save(lasso_reg_cps, file = paste(save_folder, "lasso_reg_cps.rda", sep="/"))
 
 # Perform cross-validation to obtain the optimal lambda
 cv_lasso <- cv.glmnet(x, y_train, alpha = 1, lambda = lambdas, standardize = TRUE, nfolds = 5)
@@ -872,7 +875,7 @@ optimal_lambda <- cv_lasso$lambda.min
 optimal_lambda
 
 # Save optimal lambda to be used in a different tutorial for YU predictions
-save(optimal_lambda, file = "lasso_opt_lambda.rda")
+#save(optimal_lambda, file = paste(save_folder, "lasso_opt_lambda.rda", sep="/"))
 
 ``` 
 
@@ -890,8 +893,8 @@ eval_results(y_test, cps_df_log_test$lasso_predictions_test, cps_df_log_test)
 lasso_metrics<-eval_results(y_test, cps_df_log_test$ridge_predictions_test, cps_df_log_test)
 
 # Save the CPS train and test sets along with the lasso model predictions for each observation
-saveRDS(cps_df_log_train, file="cps_df_log_train.rds")
-saveRDS(cps_df_log_test, file="cps_df_log_test.rds")
+#saveRDS(cps_df_log_train, file="cps_df_log_train.rds")
+#saveRDS(cps_df_log_test, file="cps_df_log_test.rds")
 
 ```
 
@@ -954,7 +957,7 @@ form <- as.formula(form)
 rf_cps <- ranger(form, data = train_rf, importance = 'permutation')
 
 # Save the RF model 
-save(rf_cps, file = "rf_cps.rda")
+#save(rf_cps, file = "rf_cps.rda")
 
 ```
 

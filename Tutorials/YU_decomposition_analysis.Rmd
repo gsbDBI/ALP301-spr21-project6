@@ -120,14 +120,14 @@ This tutorial consists of the following steps: \
 ```{r, echo = FALSE}
 # load cleaned CPS data
 # cps<-readRDS("cols.rds") #the cps sample we built the model on 
-yu_treatment_control<- readRDS("yu_treatment_control.rds") #the constructed sample with alumni and counterfactuals
+yu_treatment_control <- readRDS(paste(save_folder, "yu_treatment_control.rds", sep="/")) #the constructed sample with alumni and counterfactuals
 ```
 
 ```{r,echo = FALSE}
 # class(cps)<-class(as.data.frame(cps))
 # categorical<-c("year","region_large","occ1digit")
 # cps[ , categorical] <- lapply(cps[ ,categorical] , factor)
-cps_vars<--readRDS("vars.rds")
+cps_vars<--readRDS(paste(save_folder, "vars.rds", sep="/"))
 ```
 
 
