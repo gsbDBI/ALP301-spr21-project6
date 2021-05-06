@@ -119,6 +119,8 @@ This tutorial consists of the following steps: \
 
 ```{r, echo = FALSE}
 # load cleaned CPS data
+save_folder <- "intermediate"
+
 # cps<-readRDS("cols.rds") #the cps sample we built the model on 
 yu_treatment_control <- readRDS(paste(save_folder, "yu_treatment_control.rds", sep="/")) #the constructed sample with alumni and counterfactuals
 ```
@@ -285,9 +287,9 @@ region<-c("cty_pop2000","cz_pop2000","intersects_msa",
 
 ```
 
-When doing decompositions, as in this case a gender gap decomposition, it is useful to know how the variables in our data are correlated with one another. This helps to get a first idea ofwhich variables may be influencing the gap  and how. Presenting pairwise correlations is easy with the `corrplot` function from the `corrplot` package. On the table below, if the (unadjusted) p-value for a pair of variables is less than 0.05, its square is not colored. 
+When doing decompositions, as in this case a gender gap decomposition, it is useful to know how the variables in our data are correlated with one another. This helps to get a first idea of which variables may be influencing the gap and how. Presenting pairwise correlations is easy with the `corrplot` function from the `corrplot` package. On the table below, if the (unadjusted) p-value for a pair of variables is less than 0.05, its square is not colored. 
 
-Note that here we are excluding the geograpgy variables and occupation groups for better readability of the plot.
+Note that here we are excluding the geography variables and occupation groups for better readability of the plot.
 
 ```{r cor plot, echo = TRUE, fig.width=5, fig.height=5, warning=FALSE}
 # Note: if the plot looks too cramped, try increasing fig.width and fig.height in the line above
