@@ -1,0 +1,337 @@
+---
+title: "YearUp Labor Project: Investigating Heterogeneity in Race and Gender"
+author: "Parker Zhao"
+date: "May 12, 2021"
+output: 
+  html_document:
+    highlight: haddock
+    theme: journal
+    number_sections: no
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+    code_folding: hide
+---
+
+```{r setup, include = FALSE}
+
+# ```{r pressure, echo=FALSE}
+
+knitr::opts_chunk$set(
+  eval = TRUE,
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE
+)
+
+```
+
+# Loading required packages
+
+```{r load_tidyverse}
+# Ensure that pacman is installed for package management and loading.
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse) # for data reading wrangling and visualization
+
+```
+
+```{r load_packages}
+# for enabling dataframe manipulation
+pacman::p_load(dplyr)
+# for modeling, transforming, and visualizing data
+pacman::p_load(tidyverse)
+# for simplifying the process of creating tidy dat
+pacman::p_load(tidyr)
+# for working with tabular data
+pacman::p_load(data.table)
+# for data visualization
+pacman::p_load(ggplot2)
+# provides support to ggplot2 for labeling graphs
+pacman::p_load(directlabels)
+# for streamlining the model training process 
+pacman::p_load(caret)
+# for fitting a generalized linear model 
+pacman::p_load(glmnet)
+# for enabling fast implementation of random forests 
+pacman::p_load(ranger)
+# for providing a general-purpose tool for dynamic report generation
+pacman::p_load(knitr)
+# for providing a prettier RMarkdown (1.0.1)
+pacman::p_load(kableExtra)
+# for forest-based statistical estimation and inference
+pacman::p_load(grf)
+```
+
+# Document Description
+This document takes for granted the wage change prediction model and uses the YU data with the counterfactual wage changes already predicted. The goal of this document is to investigate the heterogeneity by race and gender in the baseline characteristics, the effect of YearUp treatment, and the decomposition. We undertake the following steps:
+
+1) We load the cleaned and preprocessed Year-Up data with the predicted wage changes.
+
+2) We produce summary statistics for subgroups.
+
+3) We explore treatment effect heterogeneity by running regressions on subgroups by race and gender
+
+4) Finally, we decompose the treatment effects of subgroups.
+
+# Load Data
+
+```{r read_data}
+save_folder <- "intermediate"
+
+yu_df <- readRDS(paste(save_folder, "yu_treatment_control.rds", sep="/")) 
+
+yu_df_summ <- yu_df %>%
+  filter(treatment==1) %>%
+  mutate(race = if_else(race_black==1, 
+                        "black", 
+                        if_else(race_asian==1, 
+                                "asian", 
+                                if_else(race_white==1, "white", "other")
+                                )),
+         region1 = if_else(region_large==1, 1, 0),
+         region2 = if_else(region_large==2, 1, 0),
+         region3 = if_else(region_large==3, 1, 0),
+         region4 = if_else(region_large==4, 1, 0),
+         male = sex) %>%
+  dplyr::select(log_d_earn, 
+                real_yearly_earnings.1_pre, 
+                real_yearly_earnings.2_post,
+                task_abstract, task_routine,
+                cty_pop2000, poor_share,
+                region1, region2, region3, region4,
+                race, male)
+```
+
+## Summary Statistics
+
+# Black, male
+
+```{r summary_stats_black_male,  message=FALSE, echo = TRUE}
+r <- "black"
+m <- 1
+stats_df <- yu_df_summ[ (yu_df_summ$race==r & yu_df_summ$male==m), ]
+stats_df <- stats_df %>% select(-c(race, male))
+summ_stats <- fBasics::basicStats(stats_df)
+summ_stats <- as.data.frame(t(summ_stats))
+summ_stats <- summ_stats[c("Mean", "Stdev", "Minimum", "1. Quartile", "Median",  "3. Quartile", "Maximum")]
+colnames(summ_stats)[colnames(summ_stats) %in% c('1. Quartile', '3. Quartile')] <- 
+  c('Lower quartile', 'Upper quartile')
+    
+summ_stats %>% 
+  kable("html", digits=2) %>% 
+  kable_styling(
+    bootstrap_options=c("striped", "hover", "condensed", "responsive"), 
+    full_width=FALSE) 
+```
+
+# Black, female
+
+```{r summary_stats_black_female,  message=FALSE, echo = TRUE}
+r <- "black"
+m <- 0
+stats_df <- yu_df_summ[ (yu_df_summ$race==r & yu_df_summ$male==m), ]
+stats_df <- stats_df %>% select(-c(race, male))
+summ_stats <- fBasics::basicStats(stats_df)
+summ_stats <- as.data.frame(t(summ_stats))
+summ_stats <- summ_stats[c("Mean", "Stdev", "Minimum", "1. Quartile", "Median",  "3. Quartile", "Maximum")]
+colnames(summ_stats)[colnames(summ_stats) %in% c('1. Quartile', '3. Quartile')] <- 
+  c('Lower quartile', 'Upper quartile')
+    
+summ_stats %>% 
+  kable("html", digits=2) %>% 
+  kable_styling(
+    bootstrap_options=c("striped", "hover", "condensed", "responsive"), 
+    full_width=FALSE) 
+```
+
+
+# Non-black, male
+
+```{r summary_stats_nonblack_male,  message=FALSE, echo = TRUE}
+r <- "black"
+m <- 1
+stats_df <- yu_df_summ[ (yu_df_summ$race!=r & yu_df_summ$male==m), ]
+stats_df <- stats_df %>% select(-c(race, male))
+summ_stats <- fBasics::basicStats(stats_df)
+summ_stats <- as.data.frame(t(summ_stats))
+summ_stats <- summ_stats[c("Mean", "Stdev", "Minimum", "1. Quartile", "Median",  "3. Quartile", "Maximum")]
+colnames(summ_stats)[colnames(summ_stats) %in% c('1. Quartile', '3. Quartile')] <- 
+  c('Lower quartile', 'Upper quartile')
+    
+summ_stats %>% 
+  kable("html", digits=2) %>% 
+  kable_styling(
+    bootstrap_options=c("striped", "hover", "condensed", "responsive"), 
+    full_width=FALSE) 
+```
+
+# Non-black, female
+
+```{r summary_stats_nonblack_female,  message=FALSE, echo = TRUE}
+r <- "black"
+m <- 0
+stats_df <- yu_df_summ[ (yu_df_summ$race!=r & yu_df_summ$male==m), ]
+stats_df <- stats_df %>% select(-c(race, male))
+summ_stats <- fBasics::basicStats(stats_df)
+summ_stats <- as.data.frame(t(summ_stats))
+summ_stats <- summ_stats[c("Mean", "Stdev", "Minimum", "1. Quartile", "Median",  "3. Quartile", "Maximum")]
+colnames(summ_stats)[colnames(summ_stats) %in% c('1. Quartile', '3. Quartile')] <- 
+  c('Lower quartile', 'Upper quartile')
+    
+summ_stats %>% 
+  kable("html", digits=2) %>% 
+  kable_styling(
+    bootstrap_options=c("striped", "hover", "condensed", "responsive"), 
+    full_width=FALSE) 
+```
+
+# Overall Treatment Effect
+[Copied from tutorial]
+Now that we have the actual yearly earning changes of Year Up participants as well as the counterfactual yearly earning changes (earning changes had they not participated in the training program), we can do the main step of the analysis and compare the two outcomes. To that end, we simply compare the average in actual yearly earning changes to the average in counterfactual yearly earning changes. That is exactly equivalent to regressing yearly earning changes on a treatment indicator, where the treatment indicator shows whether the outcome is the actual (treatment) or counterfactual (control) outcome. 
+
+```{r treat_effect_model}
+ate<-lm(log_d_earn~treatment, data=yu_df)
+summary(ate)
+paste0("Overall Treatment Effect: ", (round(exp(summary(ate)$coefficients[2,1]), 4)-1)*100, "%")
+```
+
+The regression table shows that the difference in log earnings between t and t+1 is 0.470 for Year Up participants as compared to their counterfactual outcomes. We can convert this coefficient into the log odds ratio by taking the expectation, since our outcome is log(a)-log(b)=log(a/b) and get 1.61.
+Thus, there is a positive treatment effect of ~60% from the YU training program, i.e. the real yearly earnings of YU participants experience a 60% increase due to this training program, compared to what they otherwise would have got. 
+
+# Heterogeneity by Subgroups
+
+## Heterogeneity by Gender
+
+Of the 1123 individuals, 629 individuals are male and 503 individuals are female. 
+
+Below are the treatment effects by gender discussed in the heterogeneity tutorial. Here, we add a brief discussion on the interpretation of logged coefficients. After running the regression, $log\_d\_earn = \beta_1 treatment + \beta_2 male + \beta_3 treatment*male$, we find that the coefficient on treatment ($\beta_1$) is 0.544 and the coefficient on treatment*male ($\beta_3$) is -0.121. This means that for women ($male=0$), the treatment increased the change in their logged earnings by 0.544 ($\beta_1$). Let's denote $Y(1)_{post}^{female}$ and $Y(0)_{post}^{female}$ as the observed and predicted post-YU earnings of women and $Y_{pre}^{female}$ as the (observed) pre-YU earnings. Our outcome variable, $log\_d\_earn$ can then be expressed as $\log(Y(1)_{post}^{female})-\log(Y_{pre}^{female})=\log(\frac{Y(1)_{post}^{female}}{Y_{pre}^{female}})$ for the observed change in log earnings and $\log(\frac{Y(0)_{post}^{female}}{Y_{pre}^{female}})$ for the predicted change in log earnings. Then we are saying that on average, 
+$$\log(\frac{Y(1)_{post}^{female}}{Y_{pre}^{female}}) - \log(\frac{Y(0)_{post}^{female}}{Y_{pre}^{female}}) = \log(\frac{Y(1)_{post}^{female}}{Y(0)_{post}^{female}}) = 0.544.$$
+To get the increase in earnings over the predicted, we unlog both sides to get $\frac{Y(1)_{post}^{female}}{Y(0)_{post}^{female}}=e^{0.544}=1.722$. This means that women make 72.2% more after participating in the program than they would have had they not participated in the program. For men ($male=1$), the treatment increased the change in their logged earnings by 0.423 ($\beta_1+\beta_3$). Performing the same unlogging, we get $\frac{Y(1)_{post}^{male}}{Y(0)_{post}^{male}}=e^{0.423}=1.526$. Men make 52.6% more after the program, compared to what they otherwise would have made.
+
+Now, we look at the interpretation of the gap in treatment effect in logged earnings between men and women, -0.121, which is just the interaction term ($\beta_3$). Mathematically, we have that $e^{\beta_1}*e^{\beta_3}=e^{\beta_1+\beta_3}$. We've already calculated the first term, which is the treatment effect for women ($\frac{Y(1)_{post}^{female}}{Y(0)_{post}^{female}}=1.722$), and we've already calculated the last term, which is the treatment effect for men ($\frac{Y(1)_{post}^{male}}{Y(0)_{post}^{male}}=e^{0.423}=1.526$). So, we have that $e^{\beta_3}=e^{-0.121}=0.886=\frac{\frac{Y(1)_{post}^{male}}{Y(0)_{post}^{male}}}{\frac{Y(1)_{post}^{female}}{Y(0)_{post}^{female}}}$. We can say the following: the average growth in earnings due to the treatment for men is 0.886 times that for women. We can flip it and say the average growth in earnings due to the treatment for women is $\frac{1}{0.886}=1.129$ times that for men. If we want to express this in terms of percentage points, we can say that the average growth in earnings for women is $72.2-52.6=19.6$ percentage points (not percent) higher than that for men. From here on out, we use the term "treatment effect" to mean $\frac{Y(1)_{post}}{Y(0)_{post}}$, the average growth in earnings due to the treatment. 
+
+```{r treat_effect_gender}
+n_digits <- 4
+
+ate<-lm(log_d_earn~treatment + sex*treatment+sex, data = yu_df)
+summary(ate)
+
+beta1 <- summary(ate)$coefficients[2,1]
+beta2 <- summary(ate)$coefficients[3,1]
+beta3 <- summary(ate)$coefficients[4,1]
+
+paste0("YU treatment effect for women: ", round(exp(beta1)-1, n_digits)*100, "%")
+paste0("YU treatment effect for men: ", round(exp(beta1+beta3)-1, n_digits)*100, "%")
+paste0("(Existing) gender gap in earnings growth rate: ", round(exp(beta2)-1, n_digits)*100, "%")
+paste0("In percent terms, YU treatment effect on growth rate for men is ", 
+       round(exp(beta1)-exp(beta1+beta3), n_digits)*100, " percentage points lower than for women ")
+paste0("YU treatment effect on growth rate for men is ", round(exp(beta3), n_digits), " times that for women")
+```
+
+## Heterogeneity by Race
+
+Of the 1132 individuals in our final sample, 46 are white, 103 are Asian, 459 are Black, and the remaining 521 are classified as other. Since the results of white, Asian, and un-classified people are relatively similar, and the number of white and Asian people is comparatively small, we put these groups together in the following analysis. The major dimension of heterogeneity we investigate is Black vs non-Black people.
+
+
+```{r race_effect_prelim}
+#Black
+ate<-lm(log_d_earn~treatment, data=subset(yu_df, race_black==1))
+paste0("YU treatment effect for Black people: ", round(exp(summary(ate)$coefficients[2,1])-1, n_digits)*100, "%")
+
+#Non-Black
+ate<-lm(log_d_earn~treatment, data=subset(yu_df, race_black==0))
+paste0("YU treatment effect for non-Black people: ", round(exp(summary(ate)$coefficients[2,1])-1, n_digits)*100, "%")
+
+#Interaction
+
+ate<-lm(log_d_earn~treatment + race_black*treatment+race_black, data = yu_df)
+summary(ate)
+beta1 <- summary(ate)$coefficients[2,1]
+beta2 <- summary(ate)$coefficients[3,1]
+beta3 <- summary(ate)$coefficients[4,1]
+
+paste0("YU treatment effect for non-Black people: ", round(exp(beta1)-1, n_digits)*100, "%")
+paste0("YU treatment effect for Black people: ", round(exp(beta1+beta3)-1, n_digits)*100, "%")
+paste0("YU treatment effect on growth rate for non-Black people is ", 
+       round(exp(beta1)-exp(beta1+beta3), n_digits)*100, " percentage points higher than for Black people ")
+```
+
+Looking at subsets, we see that the treatment effect for Black people is 55% and the treatment effect for non-Black people is 65%. Next, we run a regression with race interacted with treatment. We see that the interaction term is negative and significant at the 1% level. This implies that the YU treatment was less effective for Black people, by a magnitude of around 10 percentage points.
+
+## Heterogeneity by Race and Gender
+
+In this section, we explore the dynamics between race and gender. Since both variables are binary, this amounts to comparing the treatment effects between four groups. Of the 1132 individuals, we have 250 Black men, 209 Black women, 379 non-Black men, and 294 non-Black women.
+
+```{r interacted_treat_effect_race}
+ate<-lm(log_d_earn~treatment + sex*treatment+sex, data = subset(yu_df, race_black==1))
+beta1 <- summary(ate)$coefficients[2,1]
+beta2 <- summary(ate)$coefficients[3,1]
+beta3 <- summary(ate)$coefficients[4,1]
+
+black_female <- exp(beta1)-1
+black_male <- exp(beta1+beta3)-1
+
+ate<-lm(log_d_earn~treatment + sex*treatment+sex, data = subset(yu_df, race_black==0))
+beta1 <- summary(ate)$coefficients[2,1]
+beta2 <- summary(ate)$coefficients[3,1]
+beta3 <- summary(ate)$coefficients[4,1]
+
+nonblack_female <- exp(beta1)-1
+nonblack_male <- exp(beta1+beta3)-1
+
+paste0("YU treatment effect for Black females: ", round(black_female, n_digits)*100, "%")
+paste0("YU treatment effect for Black males: ", round(black_male, n_digits)*100, "%")
+paste0("YU treatment effect for non-Black females: ", round(nonblack_female, n_digits)*100, "%")
+paste0("YU treatment effect for non-Black males: ", round(nonblack_male, n_digits)*100, "%")
+paste0("---------------------------------------")
+paste0("YU treatment effect on growth rate for Black females is ", 
+       round(black_female-black_male, n_digits)*100, " percentage points higher than for Black males ")
+
+paste0("YU treatment effect on growth rate for non-Black females is ", 
+       round(nonblack_female-nonblack_male, n_digits)*100, " percentage points higher than for non-Black males ")
+
+paste0("YU treatment effect on growth rate for non-Black males is ", 
+       round(nonblack_male-black_male, n_digits)*100, " percentage points higher than for Black males ")
+
+paste0("YU treatment effect on growth rate for non-Black females is ", 
+       round(nonblack_female-black_female, n_digits)*100, " percentage points higher than for Black females ")
+
+
+paste0("Full Interactions Model")
+ate<-lm(log_d_earn~treatment + sex + race_black + sex*race_black + 
+          sex*treatment + race_black*treatment + sex*race_black*treatment, 
+        data = yu_df)
+summary(ate)
+
+beta1 <- summary(ate)$coefficients[2,1]
+beta2 <- summary(ate)$coefficients[3,1]
+beta3 <- summary(ate)$coefficients[4,1]
+beta4 <- summary(ate)$coefficients[5,1]
+beta5 <- summary(ate)$coefficients[6,1]
+beta6 <- summary(ate)$coefficients[7,1]
+beta7 <- summary(ate)$coefficients[8,1]
+```
+
+We see that the group with the lowest treatment effect is indeed Black males, consistent with the result that Black people and males see lower treatment effects. However, it is interesting to note that the coefficient of the full interaction term is positive, though only significant at the 10% level. This reflects the fact that the racial gap in treatment effects is much larger for women than for men. The treatment effect gap in real earnings growth between non-Black women and Black women is 18.09 percentage points while the gap between non-Black men and Black men is only 4.17 percentage points. An alternative interpretation is that the gender gap in treatment effects is much larger for non-Black people than for Black people. The treatment effect gap between non-Black women and men is 25.69 percentage points while the gap between Black women and men is 11.77 percentage points.
+
+# Decomposition Analysis
+
+## Decomposition for Gender
+
+## Decomposition for Race
+
+## Decomposition for Race and Gender
+
+Decomposition for Race by Gender and Decomposition for Gender by Race 
+
+
+
+
+
+
+
+
+
+
+
+
