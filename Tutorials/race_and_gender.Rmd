@@ -26,8 +26,6 @@ knitr::opts_chunk$set(
 
 ```
 
-# Loading required packages
-
 ```{r load_tidyverse}
 # Ensure that pacman is installed for package management and loading.
 if (!require("pacman")) install.packages("pacman")
@@ -44,22 +42,22 @@ pacman::p_load(tidyverse)
 pacman::p_load(tidyr)
 # for working with tabular data
 pacman::p_load(data.table)
+pacman::p_load(devtools)
 # for data visualization
 pacman::p_load(ggplot2)
+# for plotting correlations 
+pacman::p_load(corrplot)  # Correlations (0.84)
 # provides support to ggplot2 for labeling graphs
 pacman::p_load(directlabels)
-# for streamlining the model training process 
-pacman::p_load(caret)
-# for fitting a generalized linear model 
-pacman::p_load(glmnet)
-# for enabling fast implementation of random forests 
-pacman::p_load(ranger)
 # for providing a general-purpose tool for dynamic report generation
 pacman::p_load(knitr)
 # for providing a prettier RMarkdown (1.0.1)
 pacman::p_load(kableExtra)
-# for forest-based statistical estimation and inference
-pacman::p_load(grf)
+pacman::p_load(stargazer)
+options(scipen = 1000)
+pacman::p_load('fastDummies')
+pacman::p_load(Formula)
+source_url("https://raw.githubusercontent.com/MatthieuStigler/Misconometrics/master/Gelbach_decompo/dec_covar.R")
 ```
 
 # Document Description
@@ -72,8 +70,6 @@ This document takes for granted the wage change prediction model and uses the YU
 3) We explore treatment effect heterogeneity by running regressions on subgroups by race and gender
 
 4) Finally, we decompose the treatment effects of subgroups.
-
-# Load Data
 
 ```{r read_data}
 save_folder <- "intermediate"
@@ -102,9 +98,9 @@ yu_df_summ <- yu_df %>%
                 race, male)
 ```
 
-## Summary Statistics
+# Summary Statistics
 
-# Black, male
+## Black, male
 
 ```{r summary_stats_black_male,  message=FALSE, echo = TRUE}
 r <- "black"
@@ -124,7 +120,7 @@ summ_stats %>%
     full_width=FALSE) 
 ```
 
-# Black, female
+## Black, female
 
 ```{r summary_stats_black_female,  message=FALSE, echo = TRUE}
 r <- "black"
@@ -145,7 +141,7 @@ summ_stats %>%
 ```
 
 
-# Non-black, male
+## Non-black, male
 
 ```{r summary_stats_nonblack_male,  message=FALSE, echo = TRUE}
 r <- "black"
@@ -165,7 +161,7 @@ summ_stats %>%
     full_width=FALSE) 
 ```
 
-# Non-black, female
+## Non-black, female
 
 ```{r summary_stats_nonblack_female,  message=FALSE, echo = TRUE}
 r <- "black"
@@ -316,14 +312,414 @@ We see that the group with the lowest treatment effect is indeed Black males, co
 
 # Decomposition Analysis
 
-## Decomposition for Gender
+Below, we present 4 analyses where we subset on male, female, Black, or non-Black, then perform decomposition analysis on either gender or Black, depending on which variable was subsetted. The first striking result is that when we restrict our attention to just men, the coefficient on Black is not significant, and switches from negative to positive as we control for more variables (especially region). For women, the coefficient on Black stays significant even after controlling for all available covariates. Regional differences accounts for the largest portion of the racial gap in women, but even in the full model, the coefficient on Black is -0.077. 
 
-## Decomposition for Race
+Next, we can decompose the gender variable, subsetting on Black or non-Black individuals. For both groups, the coefficient on gender stays significant even after controlling for all variables. The difference in the magnitude of the coefficient does not change much between the base and the full model. It is unclear what we can learn from this decomposition. 
 
-## Decomposition for Race and Gender
+```{r, echo=FALSE}
+# setup
+save_folder <- "intermediate"
+cps_vars <- readRDS(paste(save_folder, "vars.rds", sep="/"))
 
-Decomposition for Race by Gender and Decomposition for Gender by Race 
+occ_group1 <- yu_df %>%
+  select(tidyselect::vars_select(colnames(cps_vars), starts_with('occ1digit_', ignore.case = TRUE)))
+occupation <- colnames(occ_group1)
+occupation <- occupation[occupation!="occ1digit_transport"] 
 
+tasks <- c("task_abstract", "task_routine", "task_manual")
+
+occexp <- c("experience", tasks)
+            
+region <-c("cty_pop2000","cz_pop2000","intersects_msa",
+                    "cs00_seg_inc","cs00_seg_inc_pov25","cs00_seg_inc_aff75",
+                    "cs_race_theil_2000","gini99","poor_share","inc_share_1perc",
+                    "frac_middleclass","rel_tot","cs_frac_black",
+                    "cs_frac_hisp","unemp_rate","pop_d_2000_1980","lf_d_2000_1980",
+                    "cs_labforce","cs_elf_ind_man","cs_born_foreign","mig_inflow",
+                    "mig_outflow","pop_density","frac_traveltime_lt15","hhinc00",
+                    "median_house_value","cs_educ_ba",
+                    "cs_fam_wkidsinglemom","crime_total","subcty_exp_pc",
+                    "taxrate","tax_st_diff_top20")
+
+yu_df_diff <- tidyr::spread(yu_df, treatment, log_d_earn)
+names(yu_df_diff)[names(yu_df_diff)=="0"] <- "log_d_earn_counterfactual"
+names(yu_df_diff)[names(yu_df_diff)=="1"] <- "log_d_earn_actual"
+yu_df_diff$log_d_earn_change <- (yu_df_diff$log_d_earn_actual - yu_df_diff$log_d_earn_counterfactual)
+yu_df_diff <- dummy_cols(yu_df_diff, select_columns = 'occ1digit')
+yu_df_diff <- yu_df_diff %>% rename(black = race_black)
+```
+
+## Decomposition for Race, Subsetting on Women 
+
+```{r,echo = TRUE}
+yu_df_diff_women <- yu_df_diff %>% filter(sex==0)
+
+outcome<- "log_d_earn_change"
+black <- c("black")
+background1 <- c("age", "race_white", "race_asian", "edu_num")
+
+lm1<- as.formula(
+  paste(outcome,
+        paste(c(black), collapse = " + "),
+        sep = " ~ "))
+model1<-lm(lm1, data = yu_df_diff_women)
+
+lm2<- as.formula(
+  paste(outcome,
+        paste(c(black, background1), collapse = " + "),
+        sep = " ~ "))
+model2<-lm(lm2, data = yu_df_diff_women)
+
+lm3<- as.formula(
+  paste(outcome,
+        paste(c(black, background1, occexp), collapse = " + "),
+        sep = " ~ "))
+model3<-lm(lm3, data = yu_df_diff_women)
+
+lm4<- as.formula(
+  paste(outcome,
+        paste(c(black, background1, occexp, region), collapse = " + "),
+       sep = " ~ "))
+model4<-lm(lm4,  data = yu_df_diff_women)
+
+lm5<- as.formula(
+  paste(outcome,
+        paste(c(black, background1, occexp, region, "log_real_yearly_earnings_1"), collapse = " + "),
+       sep = " ~ "))
+model5<-lm(lm5,  data = yu_df_diff_women)
+```
+
+```{r,  echo = TRUE, results = 'asis'}
+stargazer(model1, model2, model3, model4, model5,
+          title="OLS regression of counterfactual difference in log earnings between t and t+1 for program particpants, consecutively adding more covariates",
+          type = 'html',
+          omit=c(background1,occexp,region,"log_real_yearly_earnings_1"),
+          df = FALSE,
+          add.lines = list(c("Demographics", "No", "Yes", "Yes", "Yes","Yes"),c("Occupation+Experience", "No", "No","Yes","Yes", "Yes"),  c("Local labor market characteristics", "No", "No", "No", "Yes","Yes" ), c("Earnings at t", "No", "No", "No", "No","Yes")),
+          notes.append = FALSE,
+          notes = c("Dependent variable: predicted change in log earnings.","Significance level: * p$<$0.10, ** p$<$0.05, *** p$<$0.01. For further notes, see text." )
+)
+
+```
+
+```{r,  echo = TRUE, results = 'asis'}
+
+dec_long_2 <- dec_covar(object = model5, var_main = c("black"), format = "long", add_coefs = TRUE, conf.int = TRUE)
+
+# add occupation group
+ dec_long_2a<-dec_long_2 %>%
+   mutate(group= if_else(covariate %in% c("male"), "male",
+            if_else(covariate %in% c("age", "age2"), "age",
+                         if_else(covariate %in% c("race_white","race_asian"), "race",
+                                if_else(covariate %in% c("experience", "experience2"), "experience",
+                                        if_else(covariate %in% c("log_real_yearly_earnings_1"), "pre-earnings",
+   if_else(covariate %in% occupation, "occupation_group",
+           if_else(covariate %in% tasks, "occupation_tasks",
+           if_else(covariate %in% region, "regional",   
+                         "education")))))))))
+# 
+# 
+sumthose<-  c("beta_K", "beta_K_low", "beta_K_high",
+              "gamma","gamma_low", "gamma_high", "delta")
+
+keepthose<- c("beta_var_base", "beta_var_full")
+
+dec_long_2b <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(sumthose)), funs(sum), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2c <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(keepthose)), funs(max), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2d <-left_join(dec_long_2b,dec_long_2c,by="covariate")
+
+dec_long_2d$variable<-c(rep("black", times=(dim(dec_long_2d)[1])))
+
+plot_dec(dec_long_2d) +
+   ggtitle("Effect of each covariate group on the black coef, only female")
+```
+
+## Decomposition for Race, Subsetting on Men
+
+```{r,echo = TRUE}
+yu_df_diff_men <- yu_df_diff %>% filter(sex==1)
+
+outcome<- "log_d_earn_change"
+black <- c("black")
+background1 <- c("age", "race_white", "race_asian", "edu_num")
+
+lm1<- as.formula(
+  paste(outcome,
+        paste(c(black), collapse = " + "),
+        sep = " ~ "))
+model1<-lm(lm1, data = yu_df_diff_men)
+
+lm2<- as.formula(
+  paste(outcome,
+        paste(c(black, background1), collapse = " + "),
+        sep = " ~ "))
+model2<-lm(lm2, data = yu_df_diff_men)
+
+lm3<- as.formula(
+  paste(outcome,
+        paste(c(black,background1,occexp), collapse = " + "),
+        sep = " ~ "))
+model3<-lm(lm3, data = yu_df_diff_men)
+
+lm4<- as.formula(
+  paste(outcome,
+        paste(c(black,background1,occexp,region), collapse = " + "),
+       sep = " ~ "))
+model4<-lm(lm4,  data = yu_df_diff_men)
+
+lm5<- as.formula(
+  paste(outcome,
+        paste(c(black,background1,occexp,region, "log_real_yearly_earnings_1"), collapse = " + "),
+       sep = " ~ "))
+model5<-lm(lm5,  data = yu_df_diff_men)
+```
+
+```{r,  echo = TRUE, results = 'asis'}
+stargazer(model1, model2,model3, model4,model5,
+          title="OLS regression of counterfactual difference in log earnings between t and t+1 for program particpants, consecutively adding more covariates",
+          type = 'html',
+          omit=c(background1,occexp,region,"log_real_yearly_earnings_1"),
+          df = FALSE,
+          add.lines = list(c("Demographics", "No", "Yes", "Yes", "Yes","Yes"),c("Occupation+Experience", "No", "No","Yes","Yes", "Yes"),  c("Local labor market characteristics", "No", "No", "No", "Yes","Yes" ), c("Earnings at t", "No", "No", "No", "No","Yes")),
+          notes.append = FALSE,
+          notes = c("Dependent variable: predicted change in log earnings.","Significance level: * p$<$0.10, ** p$<$0.05, *** p$<$0.01. For further notes, see text." )
+)
+
+```
+
+```{r,  echo = TRUE, results = 'asis'}
+
+dec_long_2 <- dec_covar(object = model5, var_main = c("black"), format = "long", add_coefs = TRUE, conf.int = TRUE)
+
+# add occupation group
+ dec_long_2a<-dec_long_2 %>%
+   mutate(group= if_else(covariate %in% c("male"), "male",
+            if_else(covariate %in% c("age", "age2"), "age",
+                         if_else(covariate %in% c("race_white", "race_asian"), "race",
+                                if_else(covariate %in% c("experience", "experience2"), "experience",
+                                        if_else(covariate %in% c("log_real_yearly_earnings_1"), "pre-earnings",
+   if_else(covariate %in% occupation, "occupation_group",
+           if_else(covariate %in% tasks, "occupation_tasks",
+           if_else(covariate %in% region, "regional",   
+                         "education")))))))))
+# 
+# 
+sumthose<-  c("beta_K", "beta_K_low", "beta_K_high",
+              "gamma","gamma_low", "gamma_high", "delta")
+
+keepthose<- c("beta_var_base", "beta_var_full")
+
+dec_long_2b <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(sumthose)), funs(sum), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2c <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(keepthose)), funs(max), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2d <-left_join(dec_long_2b,dec_long_2c,by="covariate")
+
+dec_long_2d$variable<-c(rep("black", times=(dim(dec_long_2d)[1])))
+
+plot_dec(dec_long_2d) +
+   ggtitle("Effect of each covariate group on the black coef, only male")
+```
+
+## Decomposition for Gender, Subsetting on Black
+
+```{r,echo = TRUE}
+yu_df_diff_black <- yu_df_diff %>% filter(black==1)
+
+outcome <- "log_d_earn_change"
+male <- c("sex")
+background1 <- c("age", "edu_num")
+
+lm1<- as.formula(
+  paste(outcome,
+        paste(c(male), collapse = " + "),
+        sep = " ~ "))
+model1<-lm(lm1, data = yu_df_diff_black)
+
+lm2<- as.formula(
+  paste(outcome,
+        paste(c(male, background1), collapse = " + "),
+        sep = " ~ "))
+model2<-lm(lm2, data = yu_df_diff_black)
+
+lm3<- as.formula(
+  paste(outcome,
+        paste(c(male, background1, occexp), collapse = " + "),
+        sep = " ~ "))
+model3<-lm(lm3, data = yu_df_diff_black)
+
+lm4<- as.formula(
+  paste(outcome,
+        paste(c(male,background1,occexp,region), collapse = " + "),
+       sep = " ~ "))
+model4<-lm(lm4,  data = yu_df_diff_black)
+
+lm5<- as.formula(
+  paste(outcome,
+        paste(c(male,background1,occexp,region, "log_real_yearly_earnings_1"), collapse = " + "),
+       sep = " ~ "))
+model5<-lm(lm5,  data = yu_df_diff_black)
+```
+
+```{r,  echo = TRUE, results = 'asis'}
+stargazer(model1, model2,model3, model4,model5,
+          title="OLS regression of counterfactual difference in log earnings between t and t+1 for program particpants, consecutively adding more covariates",
+          type = 'html',
+          omit=c(background1,occexp,region,"log_real_yearly_earnings_1"),
+          df = FALSE,
+          add.lines = list(c("Demographics", "No", "Yes", "Yes", "Yes","Yes"),c("Occupation+Experience", "No", "No","Yes","Yes", "Yes"),  c("Local labor market characteristics", "No", "No", "No", "Yes","Yes" ), c("Earnings at t", "No", "No", "No", "No","Yes")),
+          notes.append = FALSE,
+          notes = c("Dependent variable: predicted change in log earnings.","Significance level: * p$<$0.10, ** p$<$0.05, *** p$<$0.01. For further notes, see text." )
+)
+
+```
+
+```{r,  echo = TRUE, results = 'asis'}
+
+dec_long_2 <- dec_covar(object = model5, var_main = c("sex"), format = "long", add_coefs = TRUE, conf.int = TRUE)
+
+# add occupation group
+ dec_long_2a<-dec_long_2 %>%
+   mutate(group= if_else(covariate %in% c("male"), "male",
+            if_else(covariate %in% c("age", "age2"), "age",
+                         if_else(covariate %in% c("race_white", "race_asian", "black"), "race",
+                                if_else(covariate %in% c("experience", "experience2"), "experience",
+                                        if_else(covariate %in% c("log_real_yearly_earnings_1"), "pre-earnings",
+   if_else(covariate %in% occupation, "occupation_group",
+           if_else(covariate %in% tasks, "occupation_tasks",
+           if_else(covariate %in% region, "regional",   
+                         "education")))))))))
+# 
+# 
+sumthose<-  c("beta_K", "beta_K_low", "beta_K_high",
+              "gamma","gamma_low", "gamma_high", "delta")
+
+keepthose<- c("beta_var_base", "beta_var_full")
+
+dec_long_2b <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(sumthose)), funs(sum), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2c <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(keepthose)), funs(max), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2d <-left_join(dec_long_2b,dec_long_2c,by="covariate")
+
+dec_long_2d$variable<-c(rep("sex", times=(dim(dec_long_2d)[1])))
+
+plot_dec(dec_long_2d) +
+   ggtitle("Effect of each covariate group on the sex coef, only black")
+```
+
+## Decomposition for Gender, Subsetting on non-Black
+
+```{r,echo = TRUE}
+yu_df_diff_nonblack <- yu_df_diff %>% filter(black==0)
+
+outcome <- "log_d_earn_change"
+male <- c("sex")
+background1 <- c("age", "race_white", "race_asian", "edu_num")
+
+lm1<- as.formula(
+  paste(outcome,
+        paste(c(male), collapse = " + "),
+        sep = " ~ "))
+model1<-lm(lm1, data = yu_df_diff_nonblack)
+
+lm2<- as.formula(
+  paste(outcome,
+        paste(c(male, background1), collapse = " + "),
+        sep = " ~ "))
+model2<-lm(lm2, data = yu_df_diff_nonblack)
+
+lm3<- as.formula(
+  paste(outcome,
+        paste(c(male, background1, occexp), collapse = " + "),
+        sep = " ~ "))
+model3<-lm(lm3, data = yu_df_diff_nonblack)
+
+lm4<- as.formula(
+  paste(outcome,
+        paste(c(male,background1,occexp,region), collapse = " + "),
+       sep = " ~ "))
+model4<-lm(lm4,  data = yu_df_diff_nonblack)
+
+lm5<- as.formula(
+  paste(outcome,
+        paste(c(male,background1,occexp,region, "log_real_yearly_earnings_1"), collapse = " + "),
+       sep = " ~ "))
+model5<-lm(lm5,  data = yu_df_diff_nonblack)
+```
+
+```{r,  echo = TRUE, results = 'asis'}
+stargazer(model1, model2,model3, model4,model5,
+          title="OLS regression of counterfactual difference in log earnings between t and t+1 for program particpants, consecutively adding more covariates",
+          type = 'html',
+          omit=c(background1,occexp,region,"log_real_yearly_earnings_1"),
+          df = FALSE,
+          add.lines = list(c("Demographics", "No", "Yes", "Yes", "Yes","Yes"),c("Occupation+Experience", "No", "No","Yes","Yes", "Yes"),  c("Local labor market characteristics", "No", "No", "No", "Yes","Yes" ), c("Earnings at t", "No", "No", "No", "No","Yes")),
+          notes.append = FALSE,
+          notes = c("Dependent variable: predicted change in log earnings.","Significance level: * p$<$0.10, ** p$<$0.05, *** p$<$0.01. For further notes, see text." )
+)
+
+```
+
+```{r,  echo = TRUE, results = 'asis'}
+
+dec_long_2 <- dec_covar(object = model5, var_main = c("sex"), format = "long", add_coefs = TRUE, conf.int = TRUE)
+
+# add occupation group
+ dec_long_2a<-dec_long_2 %>%
+   mutate(group= if_else(covariate %in% c("male"), "male",
+            if_else(covariate %in% c("age", "age2"), "age",
+                         if_else(covariate %in% c("race_white", "race_asian", "black"), "race",
+                                if_else(covariate %in% c("experience", "experience2"), "experience",
+                                        if_else(covariate %in% c("log_real_yearly_earnings_1"), "pre-earnings",
+   if_else(covariate %in% occupation, "occupation_group",
+           if_else(covariate %in% tasks, "occupation_tasks",
+           if_else(covariate %in% region, "regional",   
+                         "education")))))))))
+# 
+# 
+sumthose<-  c("beta_K", "beta_K_low", "beta_K_high",
+              "gamma","gamma_low", "gamma_high", "delta")
+
+keepthose<- c("beta_var_base", "beta_var_full")
+
+dec_long_2b <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(sumthose)), funs(sum), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2c <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(keepthose)), funs(max), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2d <-left_join(dec_long_2b,dec_long_2c,by="covariate")
+
+dec_long_2d$variable<-c(rep("sex", times=(dim(dec_long_2d)[1])))
+
+plot_dec(dec_long_2d) +
+   ggtitle("Effect of each covariate group on the sex coef, only black")
+```
 
 
 
