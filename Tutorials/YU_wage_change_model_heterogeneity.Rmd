@@ -367,6 +367,17 @@ colnames(summ_stats)[colnames(summ_stats) %in% c('1. Quartile', '3. Quartile')] 
 
 ```
 
+```{r region summary}
+region_summary <- yu_df %>%
+  group_by(metro_name) %>%
+  summarise(count=n(),
+            percent_women=mean(!sex),
+            percent_black=mean(race_black),
+            percent_black_women=mean(race_black & !sex))
+
+write_csv(region_summary, "region_summary.csv")
+```
+
 ```{r summary_stats_table, message=FALSE, echo = TRUE}
 
 # Pretty-printing in HTML
