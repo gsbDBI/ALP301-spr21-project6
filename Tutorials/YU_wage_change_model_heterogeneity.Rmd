@@ -367,15 +367,65 @@ colnames(summ_stats)[colnames(summ_stats) %in% c('1. Quartile', '3. Quartile')] 
 
 ```
 
-```{r region summary}
+```{r region summary tables}
 region_summary <- yu_df %>%
-  group_by(metro_name) %>%
-  summarise(count=n(),
-            percent_women=mean(!sex),
-            percent_black=mean(race_black),
-            percent_black_women=mean(race_black & !sex))
+  group_by(cz_name) %>%
+  summarise(count_yu=n(),
+            yu_percent_women=mean(!sex),
+            yu_percent_black=mean(race_black),
+            yu_percent_black_women=mean(race_black & !sex),
+            yu_mean_previous_earnings=mean(real_yearly_earnings.1_pre),
+            yu_median_previous_earnings=median(real_yearly_earnings.1_pre),
+            yu_log_d_earn_mean=mean(log_d_earn),
+            yu_log_d_earn_median=median(log_d_earn),
+            yu_age=mean(age),
+            yu_edu_num=mean(edu_num),
+            yu_mean_task_abstract=mean(task_abstract),
+            fraction_middleclass=mean(frac_middleclass),
+            fraction_middleclass=mean(cs_frac_black),
+            fraction_born_foreign=mean(cs_born_foreign),
+            pop_density=mean(pop_density),
+            median_house_value=mean(median_house_value),
+            tax_rate=mean(taxrate),
+            unemployment_rate=mean(unemp_rate),
+            inflow=mean(mig_inflow),
+            outflow=mean(mig_outflow),
+            gini=mean(gini99)) 
+
+#Using cz_name instead of metro_name to make sure it's the same
+#region_summary_test <- yu_df %>%
+#  group_by(cz_name) %>%
+#  summarise(count=n(),
+#            percent_women=mean(!sex),
+#            percent_black=mean(race_black),
+#            percent_black_women=mean(race_black & !sex))
+
+occupation_summary <- yu_df %>%
+  group_by(occ1digit) %>%
+  summarise(count_yu=n(),
+            yu_percent_women=mean(!sex),
+            yu_percent_black=mean(race_black),
+            yu_percent_black_women=mean(race_black & !sex),
+            yu_mean_previous_earnings=mean(real_yearly_earnings.1_pre),
+            yu_median_previous_earnings=median(real_yearly_earnings.1_pre),
+            yu_log_d_earn_mean=mean(log_d_earn),
+            yu_log_d_earn_median=median(log_d_earn),
+            yu_age=mean(age),
+            yu_edu_num=mean(edu_num),
+            fraction_middleclass=mean(frac_middleclass),
+            fraction_middleclass=mean(cs_frac_black),
+            fraction_born_foreign=mean(cs_born_foreign),
+            pop_density=mean(pop_density),
+            median_house_value=mean(median_house_value),
+            tax_rate=mean(taxrate),
+            unemployment_rate=mean(unemp_rate),
+            inflow=mean(mig_inflow),
+            outflow=mean(mig_outflow),
+            gini=mean(gini99)) %>%
+  arrange(-count_yu)
 
 write_csv(region_summary, "region_summary.csv")
+write_csv(occupation_summary, "occupation_summary.csv")
 ```
 
 ```{r summary_stats_table, message=FALSE, echo = TRUE}
