@@ -367,6 +367,97 @@ colnames(summ_stats)[colnames(summ_stats) %in% c('1. Quartile', '3. Quartile')] 
 
 ```
 
+```{r region and occupation summary tables}
+region_summary <- yu_df %>%
+  group_by(cz_name) %>%
+  summarise(count_yu=n(),
+            yu_percent_women=mean(!sex),
+            yu_percent_black=mean(race_black),
+            yu_percent_black_women=mean(race_black & !sex),
+            yu_mean_previous_earnings=mean(real_yearly_earnings.1_pre),
+            yu_median_previous_earnings=median(real_yearly_earnings.1_pre),
+            yu_log_d_earn_mean=mean(log_d_earn),
+            yu_log_d_earn_median=median(log_d_earn),
+            yu_age=mean(age),
+            yu_edu_num=mean(edu_num),
+            yu_mean_task_abstract=mean(task_abstract),
+            fraction_middleclass=mean(frac_middleclass),
+            fraction_middleclass=mean(cs_frac_black),
+            fraction_born_foreign=mean(cs_born_foreign),
+            pop_density=mean(pop_density),
+            median_house_value=mean(median_house_value),
+            tax_rate=mean(taxrate),
+            unemployment_rate=mean(unemp_rate),
+            inflow=mean(mig_inflow),
+            outflow=mean(mig_outflow),
+            gini=mean(gini99),
+            cty_pop2000=mean(cty_pop2000),
+            cz_pop2000=mean(cz_pop2000),
+            intersects_msa=mean(intersects_msa),
+            cs00_seg_inc=mean(cs00_seg_inc),
+            cs00_seg_inc_pov25=mean(cs00_seg_inc_pov25),
+            cs00_seg_inc_aff75=mean(cs00_seg_inc_aff75),
+            cs_race_theil_2000=mean(cs_race_theil_2000),
+            poor_share=mean(poor_share),
+            inc_share_1perc=mean(inc_share_1perc),
+            rel_tot=mean(rel_tot),
+            cs_frac_hisp=mean(cs_frac_hisp),
+            pop_d_2000_1980=mean(pop_d_2000_1980),
+            lf_d_2000_1980=mean(lf_d_2000_1980),
+            cs_labforce=mean(cs_labforce),
+            cs_elf_ind_man=mean(cs_elf_ind_man),
+            frac_traveltime_lt15=mean(frac_traveltime_lt15),
+            hhinc00=mean(hhinc00),cs_educ_ba=mean(cs_educ_ba),
+            cs_fam_wkidsinglemom=mean(cs_fam_wkidsinglemom),
+            crime_total=mean(crime_total),
+            subcty_exp_pc=mean(subcty_exp_pc),
+            tax_st_diff_top20=mean(tax_st_diff_top20)
+)
+
+#Using cz_name instead of metro_name to make sure it's the same
+#region_summary_test <- yu_df %>%
+#  group_by(cz_name) %>%
+#  summarise(count=n(),
+#            percent_women=mean(!sex),
+#            percent_black=mean(race_black),
+#            percent_black_women=mean(race_black & !sex))
+
+occupation_summary <- yu_df %>%
+  group_by(occ1digit) %>%
+  summarise(count_yu=n(),
+            yu_percent_women=mean(!sex),
+            yu_percent_black=mean(race_black),
+            yu_percent_black_women=mean(race_black & !sex),
+            yu_mean_previous_earnings=mean(real_yearly_earnings.1_pre),
+            yu_median_previous_earnings=median(real_yearly_earnings.1_pre),
+            yu_log_d_earn_mean=mean(log_d_earn),
+            yu_log_d_earn_median=median(log_d_earn),
+            yu_age=mean(age),
+            yu_edu_num=mean(edu_num),
+            fraction_middleclass=mean(frac_middleclass),
+            fraction_middleclass=mean(cs_frac_black),
+            fraction_born_foreign=mean(cs_born_foreign),
+            pop_density=mean(pop_density),
+            median_house_value=mean(median_house_value),
+            tax_rate=mean(taxrate),
+            unemployment_rate=mean(unemp_rate),
+            inflow=mean(mig_inflow),
+            outflow=mean(mig_outflow),
+            gini=mean(gini99)) %>%
+  arrange(-count_yu)
+
+write_csv(region_summary, "region_summary.csv")
+write_csv(occupation_summary, "occupation_summary.csv")
+
+occupation_region <- yu_df %>%
+  group_by(occ1digit,cz_name) %>%
+  summarise(count=n(),
+            yu_median_previous_earnings=median(real_yearly_earnings.1_pre),
+            yu_log_d_earn_median=median(log_d_earn))
+
+write_csv(occupation_region, "occupation_region.csv")
+```
+
 ```{r summary_stats_table, message=FALSE, echo = TRUE}
 
 # Pretty-printing in HTML
