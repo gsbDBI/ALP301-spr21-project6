@@ -1,0 +1,136 @@
+---
+title: "Calculations"
+#author: "YOUR NAME"
+date: "May 23, 2021"
+output: 
+  html_document:
+    highlight: haddock
+    theme: journal
+    number_sections: no
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+    code_folding: hide
+---
+
+<style>
+
+table, td, th {
+  border: none;
+  padding-left: 1em;
+  padding-right: 1em;
+  min-width: 50%;
+  margin-left: auto;
+  margin-right: auto;
+  margin-top: 1em;
+  margin-bottom: 1em;
+}
+
+h1.title {
+  font-size: 38px;
+  text-align: center;
+}
+h4.author { /* Header 4 - and the author and data headers use this too  */
+    font-size: 18px;
+  text-align: center;
+}
+h4.date { /* Header 4 - and the author and data headers use this too  */
+  font-size: 18px;
+  text-align: center;
+}
+
+</style>
+
+  
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  eval = TRUE,
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+```{r load_tidyverse}
+# Ensure that pacman is installed for package management and loading.
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse) # for data reading wrangling and visualization
+
+```
+
+
+```{r load_packages}
+# for enabling dataframe manipulation
+pacman::p_load(dplyr)
+# for modeling, transforming, and visualizing data
+pacman::p_load(tidyverse)
+# for simplifying the process of creating tidy dat
+pacman::p_load(tidyr)
+# for working with tabular data
+pacman::p_load(data.table)
+pacman::p_load(devtools)
+# for data visualization
+pacman::p_load(ggplot2)
+# for plotting correlations 
+pacman::p_load(corrplot)  # Correlations (0.84)
+# provides support to ggplot2 for labeling graphs
+pacman::p_load(directlabels)
+# for providing a general-purpose tool for dynamic report generation
+pacman::p_load(knitr)
+# for providing a prettier RMarkdown (1.0.1)
+pacman::p_load(kableExtra)
+pacman::p_load(stargazer)
+options(scipen = 1000)
+pacman::p_load('fastDummies')
+pacman::p_load(Formula)
+source_url("https://raw.githubusercontent.com/MatthieuStigler/Misconometrics/master/Gelbach_decompo/dec_covar.R")
+
+```
+
+
+```{r, echo = FALSE}
+# load cleaned CPS data
+save_folder <- "intermediate"
+
+yu_df <- readRDS(paste(save_folder, "yu_treatment_control.rds", sep="/")) 
+yu_df <- yu_df %>% rename(male=sex)
+yu_df <- dummy_cols(yu_df, select_columns = 'occ1digit')
+
+# add un-normalized values for edu_num and experience
+pre_proc_val <- readRDS(paste(save_folder, "pre_proc_val.rds", sep="/"))
+yu_df <- yu_df %>% 
+  mutate(edu_num_og = edu_num*pre_proc_val$std['edu_num']+pre_proc_val$mean['edu_num']) %>%
+  mutate(experience_og = experience*pre_proc_val$std['experience']+pre_proc_val$mean['experience']) %>%
+  mutate(age_og = age*pre_proc_val$std['age']+pre_proc_val$mean['age'])
+
+```
+
+# Alexis and Anthony
+
+```{r,echo = FALSE}
+yu_df_diff <- tidyr::spread(yu_df, treatment, log_d_earn)
+names(yu_df_diff)[names(yu_df_diff)=="0"] <- "log_d_earn_counterfactual"
+names(yu_df_diff)[names(yu_df_diff)=="1"] <- "log_d_earn_actual"
+yu_df_diff$log_d_earn_change <- (yu_df_diff$log_d_earn_actual - yu_df_diff$log_d_earn_counterfactual)
+yu_df_diff <- dummy_cols(yu_df_diff, select_columns = 'occ1digit')
+
+
+yu_like_alexis <- yu_df_diff %>% 
+  filter(male==0, race_black==0, age_og==18, experience_og==2, edu_num_og==12) %>% 
+  select(log_d_earn_change)
+paste0("Average increase in log wages over counterfactual: ", round(mean(yu_like_alexis$log_d_earn_change), 4))
+paste0("Average increase in wages over counterfactual: ", (round(exp(mean(yu_like_alexis$log_d_earn_change)), 4)-1)*100, "%")
+
+yu_like_anthony <- yu_df_diff %>% 
+  filter(male==1, race_black==1, age_og==21, experience_og==5, edu_num_og==14) %>% 
+  select(log_d_earn_change)
+paste0("Average increase in wage growth over counterfactual for Anthonys: ", round(mean(yu_like_anthony$log_d_earn_change), 4))
+paste0("Average increase in wages over counterfactual: ", (round(exp(mean(yu_like_anthony$log_d_earn_change)), 4)-1)*100, "%")
+
+paste0("I changed experience of Anthony to 5 since no individuals in our sample had Anthony's profile (inspect test df)")
+test <- yu_df_diff %>% 
+  filter(male==1, race_black==1, age_og==21, edu_num_og==14) %>% 
+  select(log_d_earn_change, experience_og)
+```
+
+
