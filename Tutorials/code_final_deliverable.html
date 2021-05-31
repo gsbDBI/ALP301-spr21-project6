@@ -9198,6 +9198,94 @@ Significance level: * p&lt;0.10, ** p&lt;0.05, *** p&lt;0.01. For further notes,
 </div>
 </div>
 </div>
+<div id="additional-analyses" class="section level1">
+<h1>Additional Analyses</h1>
+<div id="heterogeneity-by-race-and-gender" class="section level2">
+<h2>Heterogeneity by Race and Gender</h2>
+<p>In this section, we explore the dynamics between race and gender. Since both variables are binary, this amounts to comparing the treatment effects between four groups. Of the 1132 individuals, we have 250 Black men, 209 Black women, 379 non-Black men, and 294 non-Black women.</p>
+<div class="sourceCode" id="cb402"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb402-1"><a href="#cb402-1" aria-hidden="true" tabindex="-1"></a>yu_df <span class="ot">&lt;-</span> yu_treatment_control</span>
+<span id="cb402-2"><a href="#cb402-2" aria-hidden="true" tabindex="-1"></a>n_digits <span class="ot">&lt;-</span> <span class="dv">4</span></span>
+<span id="cb402-3"><a href="#cb402-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb402-4"><a href="#cb402-4" aria-hidden="true" tabindex="-1"></a>ate<span class="ot">&lt;-</span><span class="fu">lm</span>(log_d_earn<span class="sc">~</span>treatment <span class="sc">+</span> male<span class="sc">*</span>treatment<span class="sc">+</span>male, <span class="at">data =</span> <span class="fu">subset</span>(yu_df, black<span class="sc">==</span><span class="dv">1</span>))</span>
+<span id="cb402-5"><a href="#cb402-5" aria-hidden="true" tabindex="-1"></a>beta1 <span class="ot">&lt;-</span> <span class="fu">summary</span>(ate)<span class="sc">$</span>coefficients[<span class="dv">2</span>,<span class="dv">1</span>]</span>
+<span id="cb402-6"><a href="#cb402-6" aria-hidden="true" tabindex="-1"></a>beta2 <span class="ot">&lt;-</span> <span class="fu">summary</span>(ate)<span class="sc">$</span>coefficients[<span class="dv">3</span>,<span class="dv">1</span>]</span>
+<span id="cb402-7"><a href="#cb402-7" aria-hidden="true" tabindex="-1"></a>beta3 <span class="ot">&lt;-</span> <span class="fu">summary</span>(ate)<span class="sc">$</span>coefficients[<span class="dv">4</span>,<span class="dv">1</span>]</span>
+<span id="cb402-8"><a href="#cb402-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb402-9"><a href="#cb402-9" aria-hidden="true" tabindex="-1"></a>black_female <span class="ot">&lt;-</span> <span class="fu">exp</span>(beta1)<span class="sc">-</span><span class="dv">1</span></span>
+<span id="cb402-10"><a href="#cb402-10" aria-hidden="true" tabindex="-1"></a>black_male <span class="ot">&lt;-</span> <span class="fu">exp</span>(beta1<span class="sc">+</span>beta3)<span class="sc">-</span><span class="dv">1</span></span>
+<span id="cb402-11"><a href="#cb402-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb402-12"><a href="#cb402-12" aria-hidden="true" tabindex="-1"></a>ate<span class="ot">&lt;-</span><span class="fu">lm</span>(log_d_earn<span class="sc">~</span>treatment <span class="sc">+</span> male<span class="sc">*</span>treatment<span class="sc">+</span>male, <span class="at">data =</span> <span class="fu">subset</span>(yu_df, black<span class="sc">==</span><span class="dv">0</span>))</span>
+<span id="cb402-13"><a href="#cb402-13" aria-hidden="true" tabindex="-1"></a>beta1 <span class="ot">&lt;-</span> <span class="fu">summary</span>(ate)<span class="sc">$</span>coefficients[<span class="dv">2</span>,<span class="dv">1</span>]</span>
+<span id="cb402-14"><a href="#cb402-14" aria-hidden="true" tabindex="-1"></a>beta2 <span class="ot">&lt;-</span> <span class="fu">summary</span>(ate)<span class="sc">$</span>coefficients[<span class="dv">3</span>,<span class="dv">1</span>]</span>
+<span id="cb402-15"><a href="#cb402-15" aria-hidden="true" tabindex="-1"></a>beta3 <span class="ot">&lt;-</span> <span class="fu">summary</span>(ate)<span class="sc">$</span>coefficients[<span class="dv">4</span>,<span class="dv">1</span>]</span>
+<span id="cb402-16"><a href="#cb402-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb402-17"><a href="#cb402-17" aria-hidden="true" tabindex="-1"></a>nonblack_female <span class="ot">&lt;-</span> <span class="fu">exp</span>(beta1)<span class="sc">-</span><span class="dv">1</span></span>
+<span id="cb402-18"><a href="#cb402-18" aria-hidden="true" tabindex="-1"></a>nonblack_male <span class="ot">&lt;-</span> <span class="fu">exp</span>(beta1<span class="sc">+</span>beta3)<span class="sc">-</span><span class="dv">1</span></span>
+<span id="cb402-19"><a href="#cb402-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb402-20"><a href="#cb402-20" aria-hidden="true" tabindex="-1"></a><span class="fu">paste0</span>(<span class="st">&quot;YU treatment effect for Black females: &quot;</span>, <span class="fu">round</span>(black_female, n_digits)<span class="sc">*</span><span class="dv">100</span>, <span class="st">&quot;%&quot;</span>)</span></code></pre></div>
+<pre><code>## [1] &quot;YU treatment effect for Black females: 61.88%&quot;</code></pre>
+<div class="sourceCode" id="cb404"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb404-1"><a href="#cb404-1" aria-hidden="true" tabindex="-1"></a><span class="fu">paste0</span>(<span class="st">&quot;YU treatment effect for Black males: &quot;</span>, <span class="fu">round</span>(black_male, n_digits)<span class="sc">*</span><span class="dv">100</span>, <span class="st">&quot;%&quot;</span>)</span></code></pre></div>
+<pre><code>## [1] &quot;YU treatment effect for Black males: 50.1%&quot;</code></pre>
+<div class="sourceCode" id="cb406"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb406-1"><a href="#cb406-1" aria-hidden="true" tabindex="-1"></a><span class="fu">paste0</span>(<span class="st">&quot;YU treatment effect for non-Black females: &quot;</span>, <span class="fu">round</span>(nonblack_female, n_digits)<span class="sc">*</span><span class="dv">100</span>, <span class="st">&quot;%&quot;</span>)</span></code></pre></div>
+<pre><code>## [1] &quot;YU treatment effect for non-Black females: 79.96%&quot;</code></pre>
+<div class="sourceCode" id="cb408"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb408-1"><a href="#cb408-1" aria-hidden="true" tabindex="-1"></a><span class="fu">paste0</span>(<span class="st">&quot;YU treatment effect for non-Black males: &quot;</span>, <span class="fu">round</span>(nonblack_male, n_digits)<span class="sc">*</span><span class="dv">100</span>, <span class="st">&quot;%&quot;</span>)</span></code></pre></div>
+<pre><code>## [1] &quot;YU treatment effect for non-Black males: 54.27%&quot;</code></pre>
+<div class="sourceCode" id="cb410"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb410-1"><a href="#cb410-1" aria-hidden="true" tabindex="-1"></a><span class="fu">paste0</span>(<span class="st">&quot;---------------------------------------&quot;</span>)</span></code></pre></div>
+<pre><code>## [1] &quot;---------------------------------------&quot;</code></pre>
+<div class="sourceCode" id="cb412"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb412-1"><a href="#cb412-1" aria-hidden="true" tabindex="-1"></a><span class="fu">paste0</span>(<span class="st">&quot;YU treatment effect on growth rate for Black females is &quot;</span>, </span>
+<span id="cb412-2"><a href="#cb412-2" aria-hidden="true" tabindex="-1"></a>       <span class="fu">round</span>(black_female<span class="sc">-</span>black_male, n_digits)<span class="sc">*</span><span class="dv">100</span>, <span class="st">&quot; percentage points higher than for Black males &quot;</span>)</span></code></pre></div>
+<pre><code>## [1] &quot;YU treatment effect on growth rate for Black females is 11.77 percentage points higher than for Black males &quot;</code></pre>
+<div class="sourceCode" id="cb414"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb414-1"><a href="#cb414-1" aria-hidden="true" tabindex="-1"></a><span class="fu">paste0</span>(<span class="st">&quot;YU treatment effect on growth rate for non-Black females is &quot;</span>, </span>
+<span id="cb414-2"><a href="#cb414-2" aria-hidden="true" tabindex="-1"></a>       <span class="fu">round</span>(nonblack_female<span class="sc">-</span>nonblack_male, n_digits)<span class="sc">*</span><span class="dv">100</span>, <span class="st">&quot; percentage points higher than for non-Black males &quot;</span>)</span></code></pre></div>
+<pre><code>## [1] &quot;YU treatment effect on growth rate for non-Black females is 25.69 percentage points higher than for non-Black males &quot;</code></pre>
+<div class="sourceCode" id="cb416"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb416-1"><a href="#cb416-1" aria-hidden="true" tabindex="-1"></a><span class="fu">paste0</span>(<span class="st">&quot;YU treatment effect on growth rate for non-Black males is &quot;</span>, </span>
+<span id="cb416-2"><a href="#cb416-2" aria-hidden="true" tabindex="-1"></a>       <span class="fu">round</span>(nonblack_male<span class="sc">-</span>black_male, n_digits)<span class="sc">*</span><span class="dv">100</span>, <span class="st">&quot; percentage points higher than for Black males &quot;</span>)</span></code></pre></div>
+<pre><code>## [1] &quot;YU treatment effect on growth rate for non-Black males is 4.17 percentage points higher than for Black males &quot;</code></pre>
+<div class="sourceCode" id="cb418"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb418-1"><a href="#cb418-1" aria-hidden="true" tabindex="-1"></a><span class="fu">paste0</span>(<span class="st">&quot;YU treatment effect on growth rate for non-Black females is &quot;</span>, </span>
+<span id="cb418-2"><a href="#cb418-2" aria-hidden="true" tabindex="-1"></a>       <span class="fu">round</span>(nonblack_female<span class="sc">-</span>black_female, n_digits)<span class="sc">*</span><span class="dv">100</span>, <span class="st">&quot; percentage points higher than for Black females &quot;</span>)</span></code></pre></div>
+<pre><code>## [1] &quot;YU treatment effect on growth rate for non-Black females is 18.09 percentage points higher than for Black females &quot;</code></pre>
+<div class="sourceCode" id="cb420"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb420-1"><a href="#cb420-1" aria-hidden="true" tabindex="-1"></a><span class="fu">paste0</span>(<span class="st">&quot;Full Interactions Model&quot;</span>)</span></code></pre></div>
+<pre><code>## [1] &quot;Full Interactions Model&quot;</code></pre>
+<div class="sourceCode" id="cb422"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb422-1"><a href="#cb422-1" aria-hidden="true" tabindex="-1"></a>ate<span class="ot">&lt;-</span><span class="fu">lm</span>(log_d_earn<span class="sc">~</span>treatment <span class="sc">+</span> male <span class="sc">+</span> black <span class="sc">+</span> male<span class="sc">*</span>black <span class="sc">+</span> </span>
+<span id="cb422-2"><a href="#cb422-2" aria-hidden="true" tabindex="-1"></a>          male<span class="sc">*</span>treatment <span class="sc">+</span> black<span class="sc">*</span>treatment <span class="sc">+</span> male<span class="sc">*</span>black<span class="sc">*</span>treatment, </span>
+<span id="cb422-3"><a href="#cb422-3" aria-hidden="true" tabindex="-1"></a>        <span class="at">data =</span> yu_df)</span>
+<span id="cb422-4"><a href="#cb422-4" aria-hidden="true" tabindex="-1"></a><span class="fu">summary</span>(ate)</span></code></pre></div>
+<pre><code>## 
+## Call:
+## lm(formula = log_d_earn ~ treatment + male + black + male * black + 
+##     male * treatment + black * treatment + male * black * treatment, 
+##     data = yu_df)
+## 
+## Residuals:
+##      Min       1Q   Median       3Q      Max 
+## -1.75090 -0.12777 -0.00607  0.13368  1.17342 
+## 
+## Coefficients:
+##                       Estimate Std. Error t value             Pr(&gt;|t|)    
+## (Intercept)          -0.048377   0.014672  -3.297             0.000992 ***
+## treatment             0.587578   0.020750  28.317 &lt; 0.0000000000000002 ***
+## male                  0.156627   0.019552   8.011  0.00000000000000181 ***
+## black                 0.002498   0.022762   0.110             0.912621    
+## male:black            0.015637   0.030631   0.510             0.609755    
+## treatment:male       -0.154041   0.027651  -5.571  0.00000002834733997 ***
+## treatment:black      -0.105918   0.032190  -3.290             0.001016 ** 
+## treatment:male:black  0.078536   0.043319   1.813             0.069970 .  
+## ---
+## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+## 
+## Residual standard error: 0.2516 on 2256 degrees of freedom
+## Multiple R-squared:  0.491,  Adjusted R-squared:  0.4894 
+## F-statistic: 310.8 on 7 and 2256 DF,  p-value: &lt; 0.00000000000000022</code></pre>
+<div class="sourceCode" id="cb424"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb424-1"><a href="#cb424-1" aria-hidden="true" tabindex="-1"></a>beta1 <span class="ot">&lt;-</span> <span class="fu">summary</span>(ate)<span class="sc">$</span>coefficients[<span class="dv">2</span>,<span class="dv">1</span>]</span>
+<span id="cb424-2"><a href="#cb424-2" aria-hidden="true" tabindex="-1"></a>beta2 <span class="ot">&lt;-</span> <span class="fu">summary</span>(ate)<span class="sc">$</span>coefficients[<span class="dv">3</span>,<span class="dv">1</span>]</span>
+<span id="cb424-3"><a href="#cb424-3" aria-hidden="true" tabindex="-1"></a>beta3 <span class="ot">&lt;-</span> <span class="fu">summary</span>(ate)<span class="sc">$</span>coefficients[<span class="dv">4</span>,<span class="dv">1</span>]</span>
+<span id="cb424-4"><a href="#cb424-4" aria-hidden="true" tabindex="-1"></a>beta4 <span class="ot">&lt;-</span> <span class="fu">summary</span>(ate)<span class="sc">$</span>coefficients[<span class="dv">5</span>,<span class="dv">1</span>]</span>
+<span id="cb424-5"><a href="#cb424-5" aria-hidden="true" tabindex="-1"></a>beta5 <span class="ot">&lt;-</span> <span class="fu">summary</span>(ate)<span class="sc">$</span>coefficients[<span class="dv">6</span>,<span class="dv">1</span>]</span>
+<span id="cb424-6"><a href="#cb424-6" aria-hidden="true" tabindex="-1"></a>beta6 <span class="ot">&lt;-</span> <span class="fu">summary</span>(ate)<span class="sc">$</span>coefficients[<span class="dv">7</span>,<span class="dv">1</span>]</span>
+<span id="cb424-7"><a href="#cb424-7" aria-hidden="true" tabindex="-1"></a>beta7 <span class="ot">&lt;-</span> <span class="fu">summary</span>(ate)<span class="sc">$</span>coefficients[<span class="dv">8</span>,<span class="dv">1</span>]</span></code></pre></div>
+<p>We see that the group with the lowest treatment effect is indeed Black males, consistent with the result that Black people and males see lower treatment effects. However, it is interesting to note that the coefficient of the full interaction term is positive, though only significant at the 10% level. This reflects the fact that the racial gap in treatment effects is much larger for women than for men. The treatment effect gap in real earnings growth between non-Black women and Black women is 18.09 percentage points while the gap between non-Black men and Black men is only 4.17 percentage points. An alternative interpretation is that the gender gap in treatment effects is much larger for non-Black people than for Black people. The treatment effect gap between non-Black women and men is 25.69 percentage points while the gap between Black women and men is 11.77 percentage points.</p>
+</div>
+</div>
 
 
 

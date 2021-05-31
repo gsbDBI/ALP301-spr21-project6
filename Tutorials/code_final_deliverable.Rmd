@@ -3020,8 +3020,9 @@ In this section, we explore the dynamics between race and gender. Since both var
 
 ```{r interacted_treat_effect_race}
 yu_df <- yu_treatment_control
+n_digits <- 4
 
-ate<-lm(log_d_earn~treatment + sex*treatment+sex, data = subset(yu_df, race_black==1))
+ate<-lm(log_d_earn~treatment + male*treatment+male, data = subset(yu_df, black==1))
 beta1 <- summary(ate)$coefficients[2,1]
 beta2 <- summary(ate)$coefficients[3,1]
 beta3 <- summary(ate)$coefficients[4,1]
@@ -3029,7 +3030,7 @@ beta3 <- summary(ate)$coefficients[4,1]
 black_female <- exp(beta1)-1
 black_male <- exp(beta1+beta3)-1
 
-ate<-lm(log_d_earn~treatment + sex*treatment+sex, data = subset(yu_df, race_black==0))
+ate<-lm(log_d_earn~treatment + male*treatment+male, data = subset(yu_df, black==0))
 beta1 <- summary(ate)$coefficients[2,1]
 beta2 <- summary(ate)$coefficients[3,1]
 beta3 <- summary(ate)$coefficients[4,1]
@@ -3056,8 +3057,8 @@ paste0("YU treatment effect on growth rate for non-Black females is ",
 
 
 paste0("Full Interactions Model")
-ate<-lm(log_d_earn~treatment + sex + race_black + sex*race_black + 
-          sex*treatment + race_black*treatment + sex*race_black*treatment, 
+ate<-lm(log_d_earn~treatment + male + black + male*black + 
+          male*treatment + black*treatment + male*black*treatment, 
         data = yu_df)
 summary(ate)
 
