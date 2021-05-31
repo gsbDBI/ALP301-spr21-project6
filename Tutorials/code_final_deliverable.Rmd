@@ -1,0 +1,3081 @@
+---
+title: "YearUp Labor Project: Replicating Code"
+author: "Parker Zhao, Angie Peng, Edmund Zhou, Michael Saadine, Alisha Anderson, Ricky Toh Wen Xian"
+date: "May 29, 2021"
+output: 
+  html_document:
+    highlight: haddock
+    theme: journal
+    number_sections: no
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+    code_folding: hide
+---
+
+```{r setup, include = FALSE}
+
+# ```{r pressure, echo=FALSE}
+
+knitr::opts_chunk$set(
+  eval = TRUE,
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE
+)
+
+```
+
+```{r load_tidyverse}
+# Ensure that pacman is installed for package management and loading.
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse) # for data reading wrangling and visualization
+
+```
+
+```{r load_packages}
+# for enabling dataframe manipulation
+pacman::p_load(dplyr)
+# for modeling, transforming, and visualizing data
+pacman::p_load(tidyverse)
+# for simplifying the process of creating tidy dat
+pacman::p_load(tidyr)
+# for working with tabular data
+pacman::p_load(data.table)
+pacman::p_load(devtools)
+# for data visualization
+pacman::p_load(ggplot2)
+# for plotting correlations 
+pacman::p_load(corrplot)  # Correlations (0.84)
+# provides support to ggplot2 for labeling graphs
+pacman::p_load(directlabels)
+# for streamlining the model training process 
+pacman::p_load(caret)
+# for fitting a generalized linear model 
+pacman::p_load(glmnet)
+# for providing a general-purpose tool for dynamic report generation
+pacman::p_load(knitr)
+# for providing a prettier RMarkdown (1.0.1)
+pacman::p_load(kableExtra)
+pacman::p_load(stargazer)
+options(scipen = 1000)
+pacman::p_load('fastDummies')
+pacman::p_load(Formula)
+source_url("https://raw.githubusercontent.com/MatthieuStigler/Misconometrics/master/Gelbach_decompo/dec_covar.R")
+```
+
+
+# Part I: Wage Change Model
+In this project, we want to measure and analyze the returns to participating in the YearUp labor training program. Specifically, we ask the question: what is the increase in participants’ earnings after they participated in the program, compared to what their earnings would have been had they not participated? We are then interested to know whether these returns differ by subgroups.
+
+The data we received from Year Up (YU) includes the records of 1,469 individuals who _completed_ the program. We know their pre- and post-YU wages, occupations, and a few socio-economic characteristics. However, we do not have a control group (for example, a group of applicants who applied to Year Up but did not get into the program and who have similar characteristics to the Year Up participants). To build a counterfactual for the YU participants, we start by building a wage prediction model using the Current Population Survey (CPS), which represents a sample of the general U.S population. We preprocess the CPS sample used for wage prediction model to make it look more like our YU participant sample by filtering out individuals from the CPS who do not look like YU participants.
+
+We use the wage prediction model to predict the counterfactual changes in earnings for the YU participants. After obtaining the counterfactuals, we build a YU training program treatment effect model. For the treatment sample, we use the actual data on YU participants (including the post-training earnings). For the control sample, we clone the YU sample with all its characteristics (excluding the post-training earnings) and use the counterfactual obtained by the wage prediction model instead of the actual post-training earnings.
+
+Finally, we compare the mean differences in actual (post-treatment) earnings changes with the counterfactual changes to get our best estimate of the Year Up training program returns across all participants as well as for participant subgroups. We use various observable characteristics of the YU participants to create the participant subgroups, such as: gender, race, location etc. 
+
+## Steps
+We will build a model to predict year-over-year change in wages, using the CPS data. We will take the following steps:
+
+1) We start by *loading and getting to know the data*. This includes: loading all the necessary R packages, loading the data, familiarizing ourselves with the data through the codebooks and summary statistics. As described in the introduction, we use an external data set because we are interested in building a “counterfactual” - i.e. what would have happened to Year Up participants’ yearly earnings had they not participated in the training program? To that end, we use the CPS dataset because it represents a more general population in order to create a sample of non-treated individuals.
+
+2) Transforming and pre-processing the data: to prepare the dataset for the training of the model, we get rid of outliers and other unnecessary data points, log transform the outcome variable as well as scale and center (i.e. standardize) the data used as inputs to the prediction models.
+
+3) The next step is to build and evaluate different prediction models for year-over-year wage changes using the CPS data. Note that we only use the variables in the CPS data that we also have in the Year Up data. We start with a linear model and then build a lasso, ridge, and random forest model. For each of those, we train the model on a training set and test its performance on a test set. We also compare the performance across different models.
+
+4) The final step of the tutorial is a calibration exercise. Here, we are interested in figuring out whether our predictions are well-calibrated against the true values, i.e. whether on average, our predictions are correct or biased. We do this calibration exercise for all the different models and then use the best model to perform calibration analysis on subgroups of participants. This will turn out to be important for later parts in this project - since we want to analyze heterogeneous treatment effects, it is important to make sure our predictions are well-calibrated both overall as well as on the population subgroups in question. 
+
+
+## Data
+We use the Current Population Survey (CPS) to build our wage prediction model. This is a representative sample of the entire US population and is a large monthly household survey. Originally, the data includes 8 waves per household in a rotation scheme that spans one year and fourth months in total: a household first gets interviewed during four consecutive months, which is repeated after 8 months, and then again gets interviewed for four months. We only keep two waves per individual at two points that are one year apart. You can find more information about the dataset, its original structure, and variables here: [https://cps.ipums.org/cps/](https://cps.ipums.org/cps/).
+
+We begin by reading in the CPS data as well as the task and county-level data. We then select the columns from the county-level dataset which are relevant for our analysis and merge this dataset with task and CPS datasets. Finally, we filter out all the CPS data observations dating before 2005 because we only have data on YU participants from 2005 onwards and we want the time periods for the CPS and YU samples to match in order to build a counterfactual properly;  i.e. we can "help" the model to more accurately predict on our target data, in this case the YU data, by training it on data that resembles the target data more closely. This leaves us with a dataset of just under 400,000 individuals, which is still a sizable number of individuals for building our wage prediction model.
+
+In addition to the CPS data, we will be enriching the dataset by merging auxillary data that characterize the locations and occupations of the individuals in the data. We will then be adding the same data to the YU data. The auxillary occupation data stems from Autor and Dorn’s 2013 paper: “The Growth of Low-Skill Service Jobs and the Polarization of the US Labor Market” and described the routine, manual and abstract task intensity of occupations. More information about the data can be found [here](https://www.ddorn.net/data.htm). The auxillary location data comes from “Neighborhood Characteristics by County” in Opportunity Insight’s data library which can be found [here](https://opportunityinsights.org/data/).
+
+```{r read_data}
+data_folder <- "Datasets"
+save_folder <- "intermediate"
+
+# Load CPS data
+cps_7018 <- fread(paste(data_folder, "cps_7018_wide_earn.csv", sep="/"))
+
+# Load task data
+tasks<-fread(paste(data_folder, "tasks_1990dd.csv", sep="/"))
+
+# Load county-level data
+county_vars <- fread(paste(data_folder, "count_level_covars.csv", sep="/"))
+
+# Select the relevant county variables to be merged with the CPS data
+county_vars<-county_vars %>%
+  select(cty, county_name, cty_pop2000, cz, cz_name, cz_pop2000, intersects_msa, cs00_seg_inc, cs00_seg_inc_pov25, cs00_seg_inc_aff75, cs_race_theil_2000, gini99, poor_share, inc_share_1perc, frac_middleclass, rel_tot, cs_frac_black, cs_frac_hisp, unemp_rate, pop_d_2000_1980, lf_d_2000_1980, cs_labforce, cs_elf_ind_man, cs_born_foreign, mig_inflow, mig_outflow, pop_density, frac_traveltime_lt15, hhinc00, median_house_value, cs_educ_ba, cs_fam_wkidsinglemom, crime_total, subcty_exp_pc, taxrate, tax_st_diff_top20)
+
+# Merge county variables with the CPS and task data
+cps_7018 <- merge(cps_7018,county_vars, by.x="county_1", by.y = "cty")
+cps_7018 <- merge(tasks,cps_7018,by.x="occ1990", by.y="occ1990_1")
+
+# Filter out observations dating before 2005 
+cps_7018 <- cps_7018  %>% 
+  dplyr::filter(year_1>2005)
+
+```
+
+We continue processing the CPS data by filtering out all occupations that do not match the YU participants' occupations. To do so, we begin by defining the `yu_occ` variable that specifies all the occupation codes corresponding to the occupations of YU participants. We then filter out all observations in the CPS data that do not match any of the occupations of the YU participants.
+
+Finally, we select and name the relevant CPS data columns that we will be using in our analysis. Since we will be wanting to predict on the Year Up data later, we need to make sure that (1) all variables we want to use in our wage model exist in both data sets and (2) all variables are defined and scaled the same way across both data sets. It is no use training our model on a variable that does not exist in the target data.
+
+```{r preprocess_cps_occ}
+
+# Specify occupation codes corresponding to the occupations of YU participants
+yu_occ <- c(0,1007,1050,2000,2800,3420,4020,4130,4720,4740,4760,4850,4940,5240,5300,5400,9620,160,650,2016,4060,4140,4700,5350,5860,6440,6930,8340,110,1060,2910,4800,20,140,205,230,310,620,640,700,725,735,1220,2630,2720,2840,3255,3640,3800,3850,3910,3930,3955,4000,4030,4110,4120,4150,4220,4340,4600,4610,4620,4640,4710,5110,5120,5260,5520,5620,5700,5900,6050,6355,7000,7130,7720,7800,7810,7840,8740,8950,9300,9630,9640,420,930,1550,2825,4050,4420,4430,5310,5320,5600,5610,7020,7200,7710,9610,1006,2830,4010,4200,4250,4820,4900,5000,5020,4510,9350,565,2810,8360,9415,5630,6320,530,810,3600,4750,5510,5830,6420,7700,9130,4350,5220,5810,7730,2310,8255,60,540,726,910,1030,1107,2540,2600,2710,2860,2900,3645,5100,5500,5800,6230,7120,7150,7315,7420,8810,8830,137,410,1910,2440,3648,4530,4920,5150,5550,5850,7350,4830,6260,1010,740,1020,50,120,850,3510,4240,7010,9360)
+
+# Filter out all CPS observations that do not match any of the occupations of the YU participants
+cps_df<-cps_7018 %>%
+  dplyr::filter(occ2010_1 %in% yu_occ)
+
+# Select and name the relevant CPS data columns for our analysis
+cps_df<- cps_df %>%
+  select(d_earn,
+         occ2010_1,year_1,cpsidp,occ1digit_1,age_1,age2_1,sex_1,race_white_1,race_black_1,race_asian_1,
+         edu_num_1, experience_1,experience2_1,metfips_1,
+         RTIa,task_abstract,task_routine,task_manual,county_1,region_large_1,
+         county_name,cty_pop2000,cz,cz_name,cz_pop2000,intersects_msa,
+         cs00_seg_inc,cs00_seg_inc_pov25,cs00_seg_inc_aff75,
+         cs_race_theil_2000,gini99,poor_share,inc_share_1perc,
+         frac_middleclass,rel_tot,cs_frac_black,
+         cs_frac_hisp,unemp_rate,pop_d_2000_1980,lf_d_2000_1980,
+         cs_labforce,cs_elf_ind_man,cs_born_foreign,mig_inflow,
+         mig_outflow,pop_density,frac_traveltime_lt15,hhinc00,
+         median_house_value,cs_educ_ba, cs_fam_wkidsinglemom,crime_total,subcty_exp_pc,
+         taxrate,tax_st_diff_top20, real_yearly_earnings_1, real_yearly_earnings_2)
+
+colnames(cps_df)<- c( "d_earn", "occ2010","year","cpsidp","occ1digit","age","age2","sex",
+                     "race_white","race_black","race_asian","edu_num" ,"experience","experience2",
+                     "metfips", "RTIa","task_abstract","task_routine",
+                     "task_manual","county","region_large",
+                    "county_name","cty_pop2000","cz","cz_name","cz_pop2000","intersects_msa",
+                    "cs00_seg_inc","cs00_seg_inc_pov25","cs00_seg_inc_aff75",
+                    "cs_race_theil_2000","gini99","poor_share","inc_share_1perc",
+                    "frac_middleclass","rel_tot","cs_frac_black",
+                    "cs_frac_hisp","unemp_rate","pop_d_2000_1980","lf_d_2000_1980",
+                    "cs_labforce","cs_elf_ind_man","cs_born_foreign","mig_inflow",
+                    "mig_outflow","pop_density","frac_traveltime_lt15","hhinc00",
+                    "median_house_value","cs_educ_ba",
+                    "cs_fam_wkidsinglemom","crime_total","subcty_exp_pc",
+                    "taxrate","tax_st_diff_top20", "real_yearly_earnings_1", "real_yearly_earnings_2")
+```
+
+
+### Codebook for the CPS data
+
+Before diving into any analysis, the first step is always to get to know one's sample data. To this end, we look at the codebook and make some summary statistics on the sample. 
+
+
+| Variable name                           | Description                                    |
+|-----------------------------------------|------------------------------------------------|
+| d_earn                                  | Difference in earnings at t+1 and t            |
+| real_yearly_earnings_t                  | Earnings at year t                             |
+| male                                    | Male                                           |
+| race_white                              | Race: White                                    |
+| race_asian                              | Race: Asian                                    |
+| race_black                              | Race: Black                                    |
+| edu_num                                 | Years of Education                             |
+| experience                              | Years of Experience                            |
+| experience2                             | Years of Experience Squared                    |
+| age                                     | Age                                            |
+| age2                                    | Age Squared                                    |
+| RTIa                                    | Previous occupation: task index                |
+| task_abstract                           | Previous occupation: abstract task measure     |
+| task_manual                             | Previous occupation: manual task measure       |
+| task_routine                            | Previous occupation: routine task measure      |
+| Occupation Groups (previous occupation) |                                                |
+| occ1digit_art_sports_media              | Arts, Design, Entertainment, Sports, and Media |
+| occ1digit_building_cleaning             | Building and Grounds Cleaning and Maintenance  |
+| occ1digit_business_op                   | Business Operations Specialists                |
+| occ1digit_community                     | Community and Social Services                  |
+| occ1digit_computer_mathematica          | Computer and Mathematical                      |
+| occ1digit_construction                  | Construction                                   |
+| occ1digit_educ                          | Education, Training, and Library               |
+| occ1digit_farm_fish_forest              | Farming, Fisheries, and Forestry               |
+| occ1digit_finacial_spec                 | Financial Specialists                          |
+| occ1digit_food_serving                  | Food Preparation and Serving                   |
+| occ1digit_healthcare_supp               | Healthcare Support                             |
+| occ1digit_healthcare_tech               | Healthcare Practitioners and Technicians       |
+| occ1digit_install_maint_rep             | Installation, Maintenance, and Repair          |
+| occ1digit_life_physical_ssc             | Life, Physical, and Social Science             |
+| occ1digit_management                    | Management in Business, Science, and Arts      |
+| occ1digit_offic_admin                   | Office and Administrative Support              |
+| occ1digit_pers_care                     | Personal Care and Service                      |
+| occ1digit_production                    | Production                                     |
+| occ1digit_protective_serv               | Protective Service                             |
+| occ1digit_sales                         | Sales and Related                              |
+| occ1digit_technician                    | Technicians                                    |
+| occ1digit_transport                     | Transportation and Material Moving             |
+| Location characteristics                |                                                |
+| cty_pop2000                             | County Population in 2000                      |
+| cz_pop2000                              | Commuting Zone Population in 2000              |
+| intersects_msa                          | Urban Area                                     |
+| cs00_seg_inc                            | Income Segregation                             |
+| cs00_seg_inc_pov25                      | Segregation of Poverty (< p25)                 |
+| cs00_seg_inc_aff75                      | Segregation of Affluence (>p75)                |
+| cs_race_theil_2000                      | Racial Segregation                             |
+| gini99                                  | Gini Index Within Bottom 99%                   |
+| poor_share                              | Poverty Rate                                   |
+| inc_share_1perc                         | Top 1% Income Share                            |
+| frac_middleclass                        | Fraction Middle Class (p25-p75)                |
+| scap_ski90pcm                           | Social Capital Index                           |
+| rel_tot                                 | Percent Religious                              |
+| cs_frac_black                           | Percent Black                                  |
+| cs_frac_hisp                            | Percent Hispanic                               |
+| unemp_rate                              | Unemployment Rate in 2000                      |
+| pop_d_2000_1980                         | Percent Change in Population 1980-2000         |
+| lf_d_2000_1980                          | Percent Change in Labor Force 1980-2000        |
+| cs_labforce                             | Labor Force Participation                      |
+| cs_elf_ind_man                          | Share Working in Manufacturing                 |
+| cs_born_foreign                         | Percent Foreign Born                           |
+| mig_inflow                              | Migration Inflow Rate                          |
+| mig_outflow                             | Migration Outflow Rate                         |
+| pop_density                             | Population Density                             |
+| frac_traveltime_lt15                    | Fraction with Commute < 15 Min                 |
+| hhinc00                                 | Mean Household Income                          |
+| median_house_value                      | Median House Value                             |
+| ccd_exp_tot                             | School Expenditure per Student                 |
+| ccd_pup_tch_ratio                       | Student-Teacher Ratio                          |
+| score_r                                 | Test Score Percentile (Income Adjusted)        |
+| dropout_r                               | High School Dropout Rate (Income Adjusted)     |
+| cs_educ_ba                              | Percent College Grads                          |
+| tuition                                 | College Tuition                                |
+| gradrate_r                              | Percent College Grads                          |
+| e_rank_b                                | Absolute Mobility (Expected Rank at p25)       |
+| cs_fam_wkidsinglemom                    | Fraction of Children with Single Mother        |
+| crime_total                             | Total Crime Rate                               |
+| subcty_exp_pc                           | Local Government Expenditures                  |
+| taxrate                                 | Local Tax Rate                                 |
+| tax_st_diff_top20                       | Tax Progressivity                              |
+| region_large                            | 4 Regions                                      |
+
+### Summary Statistics for the CPS data
+The summary statistics help us get a better understanding of the numerical variables in terms of their mean, median, standard deviation, lowest and highest values as well as lower and upper quartiles.
+
+```{r summary_stats,  message=FALSE, echo = TRUE}
+# Make a data.frame containing summary statistics of interest
+cps_dfsum<-cps_df %>% dplyr::select(d_earn, real_yearly_earnings_1, real_yearly_earnings_2, where(is.numeric), -c(RTIa, occ2010, cpsidp, county, cz, metfips))
+summ_stats <- fBasics::basicStats(cps_dfsum)
+summ_stats <- as.data.frame(t(summ_stats))
+# Rename some of the columns for convenience
+summ_stats <- summ_stats[c("Mean", "Stdev", "Minimum", "1. Quartile", "Median",  "3. Quartile", "Maximum")]
+colnames(summ_stats)[colnames(summ_stats) %in% c('1. Quartile', '3. Quartile')] <- c('Lower quartile', 'Upper quartile')
+```
+
+```{r summary_stats_table, message=FALSE, echo = TRUE}
+# Pretty-printing in HTML
+summ_stats_table <- kable(summ_stats, "html", digits = 2)
+kable_styling(summ_stats_table,bootstrap_options=c("striped", "hover", "condensed", "responsive"),
+              full_width=FALSE)
+```
+
+### Transform and pre-process the data
+
+Before building a wage prediction model by training it on the CPS data, we familiarize ourselves with the CPS data and investigate it for potential outliers that could impact the robustness of our wage prediction model. An easy way to perform initial outlier analysis is to plot a histogram of the variable of interest where we put the values of the variable of interest (or bins representing a range of values) on the x-axis and the count of observations for each value, or bin of values, on the y-axis. In this case, we plot histogram of the CPS data variables of interest `d_earn`, which is the yearly difference in wages, as well as `real_yearly_earnings_1` and `real_yearly_earnings_2`, which we use to compute the yearly earnings difference `d_earn`. We then observe the histograms to identify any potential outliers that would require further investigation.  
+
+**NOTE: When performing outlier analysis, feel free to add more histogram plots for other variables you think might be important to your analysis! 
+
+Before we dive deeper into the outlier analysis, we check if any of the variables of interest have null values and perform quick statistical summaries to get a better understanding of these variables.
+
+```{r raw_data_analysis}
+# Perform statistical summaries for the variables of interest
+summary(cps_df$d_earn)
+summary(cps_df$real_yearly_earnings_1)
+summary(cps_df$real_yearly_earnings_2)
+
+# Plot the histograms for these variables
+ggplot(cps_df, aes(x=d_earn)) + 
+  geom_histogram(bins = 100)
+ggplot(cps_df, aes(x=real_yearly_earnings_1)) + 
+  geom_histogram(bins = 100)
+ggplot(cps_df, aes(x=real_yearly_earnings_2)) + 
+  geom_histogram(bins = 100)
+
+```
+                                                                                                       
+As can be seen from the histograms above, `real_yearly_earnings_1` and  `real_yearly_earnings_2` variables seem to be heavily right-skewed. We also observe that these two variables have some potentially outlier points on the very right-hand side of the histogram, so we will further investigate these two variables.
+
+### Deal with Missing Values 
+
+We begin by checking the number of missing values for our variables of interest, `d_earn`, `real_yearly_earnings_1` and `real_yearly_earnings_2`. 
+
+```{r check_null_values}
+# Check if any of the variables of interest have missing values (i.e. null values)
+sum(is.na(cps_df$d_earn))
+sum(is.na(cps_df$real_yearly_earnings_1))
+sum(is.na(cps_df$real_yearly_earnings_2))
+
+# Across table rows, only 0.18% of them have missing values 
+sum(is.na(cps_df))/nrow(cps_df)*100
+cps_df <- cps_df %>% drop_na()
+sum(is.na(cps_df))/nrow(cps_df)*100
+
+```
+
+We observe that none of the variables of interest that we will rely on heavily have any null values, so we do not need to deal with missing values for those columns. We also note that out of all values across all rows (i.e. all observations), only ~10% of them have missing values. Given that it is not a significant percent of the data, we drop these observations (i.e. ~21k out of ~193k observations). 
+
+We then proceed with checking for any zero values for `real_yearly_earnings_1` and `real_yearly_earnings_2` as we want to make sure the CPS sample matches the YU sample as closely as possible and so, individuals in the CPS data with no earning data for two consecutive years (which we call year 1 and year 2) are not relevant for building a wage prediction model for the employed YU participants. In addition, we make sure there aren't any "negative" earnings, which could have been a result of some data entry error.
+
+```{r check_zero_values}
+# Count of observations with year 1 earnings equal to $0
+sum(cps_df$real_yearly_earnings_1==0)
+# Percent of observations with year 1 earnings equal to $0
+(sum(cps_df$real_yearly_earnings_1==0) / length(cps_df$d_earn)) * 100
+# Count of observations with year 1 earnings less than $0
+sum(cps_df$real_yearly_earnings_1<0) 
+
+# Count of observations with year 2 earnings equal to $0
+sum(cps_df$real_yearly_earnings_2==0)
+# Percent of observations with year 2 earnings equal to $0
+(sum(cps_df$real_yearly_earnings_2==0) / length(cps_df$d_earn)) * 100  
+# Count of observations with year 2 earnings less than $0
+sum(cps_df$real_yearly_earnings_2<0)
+
+```
+
+After performing some initial checks, we notice that ~3.7% and ~5.0% of the year 1 earnings and year 2 earnings, respectively, have the value of \$0, but neither have values less than \$0. To ensure that there are no individuals in the CPS sample who do not have any earnings information, or who do not have any earnings information that is *relevant* for our analysis, we will proceed by filtering out these individuals from our sample.
+
+### Filter observations
+We first filter out individuals who have zero values for both `real_yearly_earnings_1` and `real_yearly_earnings_2`. As discussed above, we want to make sure the CPS sample matches the YU sample as closely as possible and so, given that our YU participants are employed, we want to make sure to filter out any CPS individuals who do not have earnings data (or simply do not earn) for two consecutive years (i.e. `real_yearly_earnings_1` and `real_yearly_earnings_2`). 
+
+Along the same lines, we decided to filter out any sample with yearly earnings less than \$100. It is possible that those earnings were inputted incorrectly-- however, even if they were inputted correctly, the participants with less than \$100 yearly earnings do not match the YU participants' earning profiles.
+
+```{r filter_lower_bound}
+# Count number of year 1 and year 2 earnings with values less than 100
+sum(cps_df$real_yearly_earnings_1 <100) 
+sum(cps_df$real_yearly_earnings_2 <100)
+
+# Filter out observations with less than $100 yearly earnings (includes observations with $0 earnings as well)
+cps_df_filtered <- cps_df[!(cps_df$real_yearly_earnings_1 < 100 | cps_df$real_yearly_earnings_2 < 100)]
+
+# Percent of observations filtered out by removing observations with less than $100 yearly earnings
+(length(cps_df$d_earn) - length(cps_df_filtered$d_earn))/ length(cps_df$d_earn) * 100  
+
+# Histogram of sample earnings, including those with earnings > $150k
+ggplot(cps_df_filtered, aes(x=d_earn)) + 
+  geom_histogram(bins = 100) 
+```
+
+We have filtered out approx 6.83% of the observations, which had real yearly earnings for either year 1 or year 2, or both, of less than \$100. 
+
+In addition, observing the statistical summary of the `d_earn` variable above (in the Transforming and pre-processing the data section), we notice that the minimum and maximum of the yearly wage changes are -\$1,331,543 and \$1,223,313 respectively. This indicates that there could be data inputting errors or that these are individuals with significantly higher earnings than the YU program participants. Because YU is a training program that targets individuals from lower socio-economic backgrounds, we will filter out individuals who earn more than $150,000 annually as they are not a good representative of the YU participant population.
+
+```{r filter_upper_bound}
+# Filter out observations with more than $150k yearly earnings
+cps_df_filtered_2 <- cps_df_filtered[cps_df_filtered$real_yearly_earnings_1 < 150000 & cps_df_filtered$real_yearly_earnings_2 < 150000]
+
+# Percent of observations filtered out with more than $150k yearly earnings
+(length(cps_df_filtered$d_earn) - length(cps_df_filtered_2$d_earn))/ length(cps_df_filtered$d_earn) * 100 
+
+# Percent of observations filtered out with more than $150k yearly earnings and less than $100 yearly earnings
+(length(cps_df$d_earn) - length(cps_df_filtered_2$d_earn))/ length(cps_df$d_earn) * 100 
+
+```
+
+Overall, we filtered out ~8.1% of the total observations due to having really low or high yearly earnings (below \$100 or above \$150,000), which could potentially be due to incorrectly inputted data-- but even if these earnings were inputted correctly, they does not match the profiles of the YU participants. 
+
+### Investigating Outliers
+
+We can now get a better insight into the potential outlier values observed in the three histograms plotted above. One of the questions that guides our investigation is:
+
+* Are these good or bad outliers? I.e. are these just participants with significantly higher yearly earnings than other participants or are these earnings a result of data inputting errors?
+
+We plot and analyze the histograms of the variables of interest again, just as we have done above.
+
+```{r outlier_analysis}
+
+# Perform a statistical summary of the filtered CPS dataset -- also good sanity check to see if the min/max values are adjusted after we filter out the observations as described above
+summary(cps_df_filtered_2$real_yearly_earnings_1)
+summary(cps_df_filtered_2$real_yearly_earnings_2)
+summary(cps_df_filtered_2$d_earn)
+
+# Histograms after filtering out observations with yearly earnings > $150k and < $100
+ggplot(cps_df_filtered_2, aes(x=d_earn)) + 
+  geom_histogram(bins = 100) 
+ggplot(cps_df_filtered_2, aes(x=real_yearly_earnings_1)) + 
+  geom_histogram(bins = 100) 
+ggplot(cps_df_filtered_2, aes(x=real_yearly_earnings_2)) + 
+  geom_histogram(bins = 100) 
+```
+
+As can be seen from the histogram above, even though we only threw out ~8% of the total observations, the range of differences in the yearly earnings shrinks significantly as we filtered out observations that had much higher values than the rest of the observations. 
+
+### Apply log transformation on wage change, the dependent variable
+We apply a log transformation on the real yearly earnings 1 and 2, `real_yearly_earnings_1` and `real_yearly_earnings_2`, such that the variable `log_d_earn` is the log ratio of the 'real_yearly_earnings_2' to 'real_yearly_earnings_1' (i.e. log_d_earn = log(real_yearly_earnings_2/real_yearly_earnings_1)). This log transformation is appropriate because it deals with the positively skewed distribution of the yearly earnings variables. Also, note that it is always good practice to add a really small delta to variables before applying a log transformation in order to prevent the log values from "exploding" and becoming NaNs in case the variables have a value of 0. So, although we have filtered out the 0 values, we will still add a delta of 0.001 to the variables `real_yearly_earnings_1` and `real_yearly_earnings_2` for good practice.
+
+```{r log_wage_change}
+
+# Applying log transformation to real_yearly_earnings_1
+cps_df_filtered_log <- cps_df_filtered_2 %>% mutate(real_yearly_earnings_1=if_else(real_yearly_earnings_1==0,0.001,real_yearly_earnings_1),
+         log_real_yearly_earnings_1=log(real_yearly_earnings_1))  # ensure real yearly earning is never 0; o.w. log(0) will give NaN values
+
+# Applying log transformation to real_yearly_earnings_2
+cps_df_filtered_log <- cps_df_filtered_log %>% mutate(real_yearly_earnings_2=if_else(real_yearly_earnings_2==0,0.001,real_yearly_earnings_2),
+         log_real_yearly_earnings_2=log(real_yearly_earnings_2)) # ensure real yearly earning is never 0; o.w. log(0) will give NaN values
+
+# Storing the difference in log yearly earnings as a new variable 'log_d_earn'
+cps_df_filtered_log <- cps_df_filtered_log %>% mutate(log_d_earn=log_real_yearly_earnings_2-log_real_yearly_earnings_1)
+
+# Percent of observations with log_d_earn == 0 
+(sum(cps_df_filtered_log$log_d_earn==0) / length(cps_df_filtered_log$log_d_earn)) * 100 
+# Percent of observations with log_real_yearly_earnings_1 == 0.001 (which is the default value we set if log_real_yearly_earnings_1 == 0)
+(sum(cps_df_filtered_log$log_real_yearly_earnings_1==0.001) / length(cps_df_filtered_log$log_d_earn)) * 100
+# Percent of observations with log_real_yearly_earnings_2 == 0.001 (which is the default value we set if log_real_yearly_earnings_2 == 0)
+(sum(cps_df_filtered_log$log_real_yearly_earnings_2==0.001) / length(cps_df_filtered_log$log_d_earn)) * 100 
+
+# Get the summary statistics for 'log_d_earn', the logged ratio of yearly earnings variable
+summary(cps_df_filtered_log$log_d_earn)
+
+# Histogram of yearly wage change after applying log transformation
+ggplot(cps_df_filtered_log, aes(x=log_d_earn)) + 
+  geom_histogram(bins = 100) 
+
+```
+
+As can be observed from the histogram and the summary statistics for 'log_d_earn', the log transformation seems reasonable in terms of both the range and distribution of values, so we proceed with building our wage prediction model.
+
+### Scale and center continuous explanatory variables 
+We initially create a dataframe with the relevant columns for our wage prediction model and if appropriate, convert variables such as region_large (which represents the region size), into categorical ones.
+
+```{r preprocess_data}
+
+# Create table with relevant columns for building a wage prediction model
+cps_df_log<- cps_df_filtered_log %>%
+  select(log_d_earn,
+         year,cpsidp,occ1digit,age,age2,sex,race_white,race_black,race_asian,
+         edu_num, experience,experience2,metfips,
+         RTIa,task_abstract,task_routine,task_manual,county,region_large,county_name,cty_pop2000,cz,cz_name,cz_pop2000,intersects_msa,
+         cs00_seg_inc,cs00_seg_inc_pov25,cs00_seg_inc_aff75,
+         cs_race_theil_2000,gini99,poor_share,inc_share_1perc,
+         frac_middleclass,rel_tot,cs_frac_black,
+         cs_frac_hisp,unemp_rate,pop_d_2000_1980,lf_d_2000_1980,
+         cs_labforce,cs_elf_ind_man,cs_born_foreign,mig_inflow,
+         mig_outflow,pop_density,frac_traveltime_lt15,hhinc00,
+         median_house_value,cs_educ_ba,
+         cs_fam_wkidsinglemom,crime_total,subcty_exp_pc,
+         taxrate,tax_st_diff_top20, log_real_yearly_earnings_1)
+
+colnames(cps_df_log)<- c("log_d_earn", 
+                         "year","cpsidp","occ1digit","age","age2","sex",
+                     "race_white","race_black","race_asian","edu_num" ,"experience","experience2",
+                     "metfips", "RTIa","task_abstract","task_routine",
+                     "task_manual","county","region_large",
+                    "county_name","cty_pop2000","cz","cz_name","cz_pop2000","intersects_msa",
+                    "cs00_seg_inc","cs00_seg_inc_pov25","cs00_seg_inc_aff75",
+                    "cs_race_theil_2000","gini99","poor_share","inc_share_1perc",
+                    "frac_middleclass","rel_tot","cs_frac_black",
+                    "cs_frac_hisp","unemp_rate","pop_d_2000_1980","lf_d_2000_1980",
+                    "cs_labforce","cs_elf_ind_man","cs_born_foreign","mig_inflow",
+                    "mig_outflow","pop_density","frac_traveltime_lt15","hhinc00",
+                    "median_house_value","cs_educ_ba",
+                    "cs_fam_wkidsinglemom","crime_total","subcty_exp_pc",
+                    "taxrate","tax_st_diff_top20", "log_real_yearly_earnings_1")
+
+# Convert the CPS table into a dataframe object
+class(cps_df_log)<-class(as.data.frame(cps_df_log))
+
+# Store variables to be converted into categorical ones
+categorical<-c("year","region_large")
+# 'lapply' applies a given function (in this case factor) to each column stored in the 'categorical' variable and converts the variable into a categorical one
+cps_df_log[ , categorical] <- lapply(cps_df_log[ ,categorical] , factor)
+
+# Store the relevant CPS data (including log wage change) for building the wage prediction model
+vars<- cps_df_log %>%
+  select(log_real_yearly_earnings_1, year,
+         age,age2,sex,race_white,race_black,race_asian,
+         edu_num, experience,experience2,
+         RTIa,task_abstract,task_routine,task_manual,region_large,
+         cty_pop2000,cs00_seg_inc,cs00_seg_inc_pov25,cs00_seg_inc_aff75,
+         cs_race_theil_2000,gini99,poor_share,inc_share_1perc,
+         frac_middleclass,rel_tot,cs_frac_black,
+         cs_frac_hisp,unemp_rate,pop_d_2000_1980,lf_d_2000_1980,
+         cs_labforce,cs_elf_ind_man,cs_born_foreign,mig_inflow,
+         mig_outflow,pop_density,frac_traveltime_lt15,hhinc00,
+         median_house_value,,cs_educ_ba,
+         cs_fam_wkidsinglemom,crime_total,subcty_exp_pc,
+         taxrate,tax_st_diff_top20)
+saveRDS(vars, file = paste(save_folder, "vars.rds", sep="/"))
+
+# Store the names of the variables used in the wage prediction model as they will come handy when adding new ones
+col_vars<-colnames(vars)
+control_vars=col_vars
+
+```
+
+Next, we need to split the data into a training and test data set. We do this by drawing a random sample of 80% into the training and 20% into the test dataset. The reason for this splitting is that we want to train our model on the bulk of the data and then check how well our model performs on data the model has never seen. This way we make sure that our model does not overfit (i.e. is too closely modeled on the training dataset but does not generalize well to other datasets). You can read about why 80-20 is the common train-test split standard [here](https://towardsdatascience.com/finally-why-we-use-an-80-20-split-for-training-and-test-data-plus-an-alternative-method-oh-yes-edc77e96295d).
+
+After splitting the dataset, in order to standardize our features,i.e. to center (subtract the mean) and scale (divide by standard deviation) them, we compute those parameters for standardization on the training set (i.e. means and standard deviations of features in the training set) and apply the same parameters on the continuous variables of both the training and test sets. The reason for this standardization is that machine learning algorithms (e.g. linear regression, logistic regression, etc.) use gradient descent as an optimization technique. Gradient descent uses a step size for each feature to update the model parameters (i.e. coefficients) in order to minimize a cost function, which in turn improves our model's predictive performance. Due to the presence of features X in the gradient descent formula, the values of these features affect the step size of the gradient descent. Thus, the difference in ranges of features leads to different step sizes for each feature. To ensure that the steps for gradient descent are updated at the same rate for all features and that the algorithm moves smoothly towards its convergence point (i.e. minima), we scale the dataset that we feed into our model. 
+See [https://ml-cheatsheet.readthedocs.io/en/latest/gradient_descent.html](https://ml-cheatsheet.readthedocs.io/en/latest/gradient_descent.html) for more on gradient descent. 
+
+As a final step, we convert categorical variables into dummy variables. Note that some ML models like random forests do not do well with many dummy variables, which is why here we made an effort to describe any categorical variables (occupation, locations) through continuous variables (e.g. the task index of an occupation or the population density of a region).
+
+```{r train_test_split}
+# Use train_fraction to split the dataset into training and test sets 
+train_fraction <- 0.80  
+n <- dim(cps_df_log)[1]
+
+# Set seed to ensure same training and test set used for model evaluation in different scripts
+set.seed(1234) 
+
+# Randomly select the specified fraction of indices to be included in the training set 
+train_idx <- sample.int(n, replace=F, size=floor(n*train_fraction))
+
+# Generate training sample using the 80-20 split rule
+cps_df_log_train <- as.data.frame(cps_df_log[train_idx,])
+cps_df_log_test <- as.data.frame(cps_df_log[-train_idx,])
+
+# Store the clean CPS (with log wage change) training and test sets without standardization
+cps_df_log_train_unscaled <- cps_df_log_train
+cps_df_log_test_unscaled <- cps_df_log_test
+
+# Save the unscaled training and test sets as we will need them to build wage prediction model for subgroups in a different tutorial
+#saveRDS(cps_df_log_train_unscaled, file = "cps_df_log_train_unscaled.rds")
+#saveRDS(cps_df_log_test_unscaled, file = "cps_df_log_test_unscaled.rds")
+
+# Select continuous variables to be scaled
+cont<-vars %>%select(-c(year, 
+                        region_large, sex, race_white,race_black,
+                        race_asian))
+cont<-c(colnames(cont))
+
+# Compute parameters for standardization on training set 
+pre_proc_val <- preProcess(cps_df_log_train[,cont], method = c("center", "scale"))
+
+# Save the continuous variables' names (will be used to standardize the YU continous variables)
+#saveRDS(cont, file = paste(save_folder, "cont.rds", sep="/"))
+# Save the standardization parameters as we will also apply them on the YU data 
+saveRDS(pre_proc_val, file = paste(save_folder, "pre_proc_val.rds", sep="/"))
+
+# Standardize the continuous variables of the training and test sets by applying the 'pre_proc_val' parameters above
+cps_df_log_train[,cont] = predict(pre_proc_val, cps_df_log_train[,cont])
+cps_df_log_test[,cont] = predict(pre_proc_val, cps_df_log_test[,cont])
+
+# Ensure CPS data is stored as a dataframe object
+class(cps_df_log)<-class(as.data.frame(cps_df_log))
+
+# Make dummy variables for variables of both training and test sets (scaled and unscaled versions)
+cols_reg = c(control_vars,'log_d_earn')
+dummies <- dummyVars(log_d_earn ~ ., data = cps_df_log[,cols_reg])
+
+cps_log_train_dummies = predict(dummies, newdata = cps_df_log_train[,cols_reg])
+cps_log_test_dummies = predict(dummies, newdata = cps_df_log_test[,cols_reg])
+
+cps_log_train_dummies_unscaled = predict(dummies, newdata = cps_df_log_train_unscaled[,cols_reg])
+cps_log_test_dummies_unscaled = predict(dummies, newdata = cps_df_log_test_unscaled[,cols_reg])
+
+# Save the scaled training and test sets dummies as we will need them to perform calibration analysis in a different tutorial
+#saveRDS(cps_log_train_dummies, file = "cps_log_train_dummies.rds")
+#saveRDS(cps_log_test_dummies, file = "cps_log_test_dummies.rds")
+
+# Save the unscaled training and test sets dummies as we will need them to build wage prediction model for subgroups in a different tutorial
+#saveRDS(cps_log_train_dummies_unscaled, file = "cps_log_train_dummies_unscaled.rds")
+#saveRDS(cps_log_test_dummies_unscaled, file = "cps_log_test_dummies_unscaled.rds")
+
+cols<-colnames(cps_log_train_dummies)
+
+# Save column names to be used in a different tutorial to ensure columns are in the same order across the CPS and YU datasets
+saveRDS(cols, file = paste(save_folder, "cols.rds", sep="/"))
+
+```
+
+## The Wage Prediction Model 
+
+Having pre-processed the dataset, we are now ready to build the wage prediction model using machine learning algorithms. Having tested a linear, ridge, lasso, and random forest model, we decide on a ridge regression model and show its performance using $R^2$, RMSE, and the standard error on the MSE. The ridge regression model penalizes the sum of squared coefficients and prevents over-fitting by regularizing the model coefficients. The optimal penalization parameter was found with cross-validaton.
+
+```{r eval_results}
+
+# Function to evaluate model performance for regression models
+eval_results <- function(true, predicted, df) {
+  # Use the definitions of R^2 and RMSE to compute these metrics
+  SSE <- sum((true-predicted)^2) 
+  SST <- sum((true - mean(true))^2)
+  R_square <- 1 - SSE / SST
+  RMSE = sqrt(SSE/nrow(df))
+  SE = (true-predicted)^2
+  MSE=SSE/nrow(df)
+  std.d_SE= sd(SE)
+  std.err_MSE=std.d_SE /sqrt(nrow(df))
+  CI_MSE_high= MSE+1.96*std.err_MSE
+  CI_MSE_low=   MSE-1.96*std.err_MSE
+  # Model performance metrics
+  metricsdf<<-data.frame(
+    MSE=MSE,
+    RMSE = RMSE,
+    Rsquare = R_square
+  )
+  data.frame(
+     MSE=MSE,
+    RMSE = RMSE,
+    Rsquare = R_square
+  )
+  
+}
+eval_results_test <- function(true, predicted, df) {
+  # Use the definitions of R^2 and RMSE to compute these metrics
+  # for test set evaluation we also add the std error and confidence intervals around the MSE
+  SSE <- sum((true-predicted)^2) 
+  SST <- sum((true - mean(true))^2)
+  R_square <- 1 - SSE / SST
+  RMSE = sqrt(SSE/nrow(df))
+  SE = (true-predicted)^2
+  MSE=SSE/nrow(df)
+  std.d_SE= sd(SE)
+  std.err_MSE=std.d_SE /sqrt(nrow(df))
+  CI_MSE_high= MSE+1.96*std.err_MSE
+  CI_MSE_low=   MSE-1.96*std.err_MSE
+  # Model performance metrics
+  metricsdf<<-data.frame(
+    MSE=MSE,
+    std.err_MSE=std.err_MSE,
+    CI_MSE_high=CI_MSE_high,
+    CI_MSE_low=CI_MSE_low,
+    RMSE = RMSE,
+    Rsquare = R_square
+  )
+  data.frame(
+     MSE=MSE,
+    std.err_MSE=std.err_MSE,
+    CI_MSE_high=CI_MSE_high,
+    CI_MSE_low=CI_MSE_low,
+    RMSE = RMSE,
+    Rsquare = R_square
+  )
+  
+}
+
+```
+
+```{r ridge_model}
+
+# Create the dependent variable 'log_d_earn'
+y_train = cps_df_log_train$log_d_earn
+y_test = cps_df_log_test$log_d_earn
+
+# Ridge regression model requires the independent variables to be matrix objects 
+x = as.matrix(cps_log_train_dummies)
+x_test = as.matrix(cps_log_test_dummies)
+
+# Initialize lambdas in range [10^2,10^-3] by incrementing the sequence by 10^(-0.1) 
+lambdas <- 10^seq(2, -3, by = -.1)
+
+# Setting alpha = 0 implements ridge regression
+ridge_reg_cps = glmnet(x, y_train, nlambda = 25, alpha = 0, lambda = lambdas, standardize=TRUE)
+
+# Save ridge model to be used in a different tutorial for YU predictions
+save(ridge_reg_cps, file = paste(save_folder, "ridge_reg_cps.rda", sep="/"))
+
+# Perform cross-validation to obtain the optimal lambda
+cv_ridge <- cv.glmnet(x, y_train, alpha = 0, lambda = lambdas)
+
+# Extract optimal lambda for ridge model
+optimal_lambda <- cv_ridge$lambda.min
+optimal_lambda
+
+```
+
+We note that the optimal lambda for our ridge model is 0.001, so we use that lambda parameter when evaluating our model on the test set. We now compute the RMSE and $R^2$ of this ridge model. 
+
+```{r ridge_preds}
+
+# Predict and evaluate on training set
+ridge_predictions_train <- predict(ridge_reg_cps, s = optimal_lambda, newx = x)
+eval_results(y_train, ridge_predictions_train, cps_df_log_train)
+
+# Predict and evaluate on test set
+cps_df_log_test$ridge_predictions_test <- predict(ridge_reg_cps, s = optimal_lambda, newx = x_test)
+eval_results_test(y_test, cps_df_log_test$ridge_predictions_test, cps_df_log_test)
+
+```
+
+As we can observe from the $R^2$ and RMSE metrics above, the ridge model performs well on both the training and test sets, which could be explained by the regularization imposed on the coefficients of the regression that makes the model more robust and prevents it from over-fitting. The standard errors and confidence interval around the MSE on the test set tells us how noisy our MSE estimate is, given the sampling variation on the test set. Ideally we would like to get a measure of the MSE on an infinitely large test set. In the absence of that, we include this confidence interval to account for the fact that there is sampling variation. With MSE equal to 0.351, the confidence interval CI_MSE_high and CI_MSE_low tells us that the true estimation of the MSE lies somewhere between 0.363 and 0.340 with 95% confidence.
+
+## Calibration Analysis for Wage Prediction Models 
+We now show the results of the calibration analysis of the predictions obtained from ridge regression model. Calibration analysis involves comparing the actual output and the expected output given by a model. 
+
+### Overall Model Calibration 
+We begin by performing an overall model calibration analysis to test the robustness of our model. To do so, we plot the actual log yearly wage changes against the predicted log yearly wage changes using the CPS test data. If the plotted line has a slope of 1 then the model is perfectly calibrated; i.e. the model predictions are identical to the actual values. We then compare the plotted line of predicted against actual values with the regression line with slope=1 and intercept=0, which represents a hypothetical, perfectly calibrated line.
+
+```{r ridge_calibration}
+
+# Plot the ridge regression model line along with a line for a hypothetical, perfectly calibrated model 
+ggplot(cps_df_log_test, aes(x = ridge_predictions_test, y = log_d_earn)) +
+  geom_point() + geom_smooth(method = lm)+ geom_abline(slope=1, intercept = 0) +
+  xlab("predicted log earn changes, CPS Test") +
+  ylab("actual log earn changes , CPS Test") +
+  coord_fixed()+
+  theme_minimal()
+
+# Run a calibration regression to obtain the slope of the regression model line plotted
+summary(lm(log_d_earn~ ridge_predictions_test, data=cps_df_log_test))
+
+```
+
+The plot above allows us to compare the line of a hypothetical, perfectly-calibrated model (black line) with the line of our ridge wage prediction model (blue line). Using the plot, we can see that the ridge model slope is very close to that of the perfectly calibrated model (as observed by the positioning of the lines as well), which implies that the actual and predicted log yearly earning changes for the ridge model are very similar to each other and thus, the ridge model is  well calibrated overall. We also add the regression output that gives the slope of the blue line, i.e. a regression of actual on predicted values. We see that the coefficient is very close to 1, confirming that the model is indeed close to perfectly calibrated.
+
+Since the model does not suffer from non-trivial over- or under-prediction, it would be a good candidate for the wage prediction model.
+
+Another way of visually inspecting how well the model is calibrated, especially when there are many datapoints and the scatterplot just gives a large cloud from which it is hard to see anything, is to bin the data. In the plot below, we bin the predicted values into 10 equally spaced intervals of predicted earning changes. We then get the mean of the actual value in each interval. We plot the midpoint of each of these intervals against the mean in each interval, adding error bars (they are so tight around the mean that they look like just one line here). We also add the 45 degree line with slope 1 and intercept 0. Ideally, the dots should along that line.  As we can see here, lower earning values are well calibrated, while higher values are slightly underestimated by our model. This is good to keep in mind for the analysis later, should we pick this as our main model. If we were to make conclusions about the highest earning changes from our analysis, we would want to remember this plot and adjust our conclusion accordingly. 
+
+```{r ridgecalibration_ntiles}
+
+cps_df_log_test<-cps_df_log_test %>%
+  mutate(bucket=cut(ridge_predictions_test,breaks = 10))
+
+get_midpoint <- function(cut_label) {
+  mean(as.numeric(unlist(strsplit(gsub("\\(|\\)|\\[|\\]", "", as.character(cut_label)), ","))))
+}
+
+cps_df_log_test$Midpoint <- sapply(cps_df_log_test$bucket, get_midpoint)
+
+cps_df_log_test_grouped <- cps_df_log_test %>% 
+  group_by(Midpoint) %>% 
+  summarise(mean = mean(log_d_earn),
+            std = sd(log_d_earn), 
+            std_err=std/sqrt(dim(cps_df_log_test)[1]))
+
+ggplot(cps_df_log_test_grouped) +
+  geom_pointrange(aes(x = Midpoint, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                  size = 0.5) +
+  geom_errorbar(aes(x = Midpoint, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                width = 0.2,
+                size = 0.7) +
+  theme_linedraw() +
+    geom_abline(slope=1, intercept = 0)+
+  labs(x = "Midpoints of intervals of predicted changes in log earnings", y = "Means and standard errors of true outcome within intervals", title = "Calibration plot using intervals for better visibility")+
+    theme(axis.text.x = element_text(angle = 90))
+  
+```
+
+
+### Model Calibration by Subgroups
+Having performed an overall model calibration analysis, we will perform the same analysis for different subgroups. We want to make sure that the model is robust and well calibrated not just across all observations but also across different subgroups of observations. Because the lasso and ridge models have performed better than the random forest model, we will use only the former two to perform the calibration by subgroups analysis. 
+
+#### Calibration By Gender 
+We perform calibration analysis by using gender to create subgroups. 
+
+```{r ridge_calib_gender}
+
+# Plot the ridge regression model line using gender as a subgroup along with a line for a hypothetical, perfectly calibrated model 
+ggplot(cps_df_log_test, aes(x = ridge_predictions_test, y = log_d_earn, fill=factor(sex))) +
+  geom_point(aes(fill=factor(sex)),colour="transparent",shape=21) +
+  stat_smooth(aes(colour=factor(sex)),method="lm",se = FALSE) + 
+  geom_abline(slope=1, intercept = 0) +
+  xlab("predicted log earn changes, CPS Test by Gender") +
+  ylab("actual log earn changes , CPS Test by Gender") +
+  theme_minimal()
+```
+```{r ridge_calib_male}
+# Run a calibration regression for male observations to obtain the slope of the regression model line plotted
+summary(lm(log_d_earn~ ridge_predictions_test, data=subset(cps_df_log_test, sex==1))) # sex==1 is male
+```
+
+```{r ridge_calib_female}
+# Run a calibration regression for female observations to obtain the slope of the regression model line plotted
+summary(lm(log_d_earn~ ridge_predictions_test, data=subset(cps_df_log_test, sex==0))) # sex==0 is female
+```
+The plot above allows us to compare the line of a hypothetical, perfectly-calibrated model (black line) with the lines of our ridge wage prediction model for male observations (blue line) and for female observations (pink line). Using the plot, we can see that the ridge model slope for female observations is very close to that of the perfectly calibrated model (as observed by the positioning of the lines as well), which implies that the actual and predicted log yearly earning changes of the ridge model for female observations are very similar to each other. 
+
+On the other hand, for male observations, the slope of the ridge regression line is slightly steeper than that of the perfectly calibrated model, which implies that the ridge model slightly under-predicts the actual log yearly earning changes at lower values and slightly over-predicts the actual log yearly earning changes at higher values. However, the difference are very slight. The regression output for calibration regression on the two models separately also coroborate our above observations
+
+
+Next, we plot the calibration decile plots for the subgroup of male and females separately. Both plots are equally non-linear, which suggets that the calibrations are not that good for both male and female subgroups; the 3rd-9th decile for males are relatively good, but the female decile plots are a bit less linear.
+
+```{r ridgecalibration_ntiles_male}
+#Male
+num_tiles <- 10  
+
+cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$ridge_predictions_test, n=num_tiles))
+cps_df_log_test_grouped <- cps_df_log_test %>% 
+  filter(sex == 1) %>%
+  group_by(ntile) %>% 
+  summarise(mean = mean(log_d_earn),
+            std = sd(log_d_earn), 
+            std_err=std/sqrt(dim(cps_df_log_test)[1]))
+  ggplot(cps_df_log_test_grouped) +
+  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                  size = 0.5,
+                  position = position_dodge(width = .5)) +
+  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                width = 0.4,
+                size = 0.75,
+                position = position_dodge(width = .5)) +
+  theme_linedraw() +
+  labs(x = "Deciles of predicted earning changes", y = "Mean actual changes in log earnings within deciles", title = "Calibration plot using deciles for better visibility")
+```
+
+```{r ridgecalibration_ntiles_female}
+#Female
+
+num_tiles <- 10  
+
+cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$ridge_predictions_test, n=num_tiles))
+cps_df_log_test_grouped <- cps_df_log_test %>% 
+  filter(sex == 0) %>%
+  group_by(ntile) %>% 
+  summarise(mean = mean(log_d_earn),
+            std = sd(log_d_earn), 
+            std_err=std/sqrt(dim(cps_df_log_test)[1]))
+  ggplot(cps_df_log_test_grouped) +
+  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                  size = 0.5,
+                  position = position_dodge(width = .5)) +
+  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                width = 0.4,
+                size = 0.75,
+                position = position_dodge(width = .5)) +
+  theme_linedraw() +
+  labs(x = "Deciles of predicted earning changes", y = "Mean actual changes in log earnings within deciles", title = "Calibration plot using deciles for better visibility")
+```
+
+
+#### Calibration By Region
+
+We will perform a similar calibration analysis but this time using region size to create subgroups.
+
+```{r region_cat}
+# Reverse the scaling of the column representing region's size category to make the plots more understandable 
+cps_df_log_test$region_large_unscaled <-cps_df_log_test_unscaled$region_large
+
+```
+
+```{r ridge_calib_region}
+
+ggplot(cps_df_log_test, aes(x=ridge_predictions_test, y=log_d_earn, fill=factor(region_large_unscaled))) +
+  geom_point(aes(fill=factor(region_large_unscaled)),colour="transparent",shape=21) +
+  stat_smooth(aes(colour=factor(region_large_unscaled)),method="lm",se = FALSE) + 
+  geom_abline(slope=1, intercept = 0) +
+  xlab("predicted log earn changes, CPS Test by Region") +
+  ylab("actual log earn changes , CPS Test by Region") +
+  theme_minimal()
+
+table(cps_df_log_test$region_large_unscaled)
+
+```
+
+The plot above allows us to compare the line of a hypothetical, perfectly-calibrated model (black line) with the lines of our ridge wage prediction model for observations from one of the 4 regions, where region 1 is the smallest and region 4 is the largest. 
+
+In order to better understand the model calibration by region, we look at the distribution of observations across different regions. We observe that region 2 has the smallest number of observations (almost half as many as regions 3 and 4). We also observe from the calibration plot that the ridge model slope for region 2 is lower than that of the perfectly calibrated model, which implies that the ridge model over-predicts the actual log yearly earning changes at lower values and under-predicts the actual log yearly earning changes at higher values. Thus, we could explain the worse performance of the model in predicting log earning changes for observations in region 2 due to the small number of observations from that region. 
+
+In addition, lines for regions 1 and 3 show that the model predictions are better calibrated for these regions than for region 2; however, they are not as well calibrated as the line for region 4, which is the region with the highest number of observations. This shows the importance of having a balanced set of observations from different subgroups in obtaining a well calibrated model performance across subgroups.
+
+Again, the over- and under-predictions we observe for the ridge model are not large enough to make this model an unfit candidate for the wage prediction model.
+
+```{r ridge_calib_region1}
+# Run a calibration regression for observations with region==1 to obtain the slope of the regression model line plotted
+summary(lm(log_d_earn~ ridge_predictions_test, data=subset(cps_df_log_test, region_large_unscaled==1))) 
+```
+
+```{r ridge_calib_region2}
+# Run a calibration regression for observations with region==2 to obtain the slope of the regression model line plotted
+summary(lm(log_d_earn~ ridge_predictions_test, data=subset(cps_df_log_test, region_large_unscaled==2))) 
+```
+
+```{r ridge_calib_region3}
+# Run a calibration regression for observations with region==3 to obtain the slope of the regression model line plotted
+summary(lm(log_d_earn~ ridge_predictions_test, data=subset(cps_df_log_test, region_large_unscaled==3))) 
+```
+```{r ridge_calib_region4}
+# Run a calibration regression for observations with region==4 to obtain the slope of the regression model line plotted
+summary(lm(log_d_earn~ ridge_predictions_test, data=subset(cps_df_log_test, region_large_unscaled==4))) 
+```
+
+```{r ridgecalibration_ntiles_region1}
+
+num_tiles <- 10 
+cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$ridge_predictions_test, n=num_tiles))
+cps_df_log_test_grouped <- cps_df_log_test %>% 
+  dplyr::filter(region_large_unscaled==1) %>% 
+  group_by(ntile) %>% 
+  summarise(mean = mean(log_d_earn),
+            std = sd(log_d_earn), 
+            std_err=std/sqrt(dim(cps_df_log_test)[1]))
+  ggplot(cps_df_log_test_grouped) +
+  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                  size = 0.5,
+                  position = position_dodge(width = .5)) +
+  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                width = 0.4,
+                size = 0.75,
+                position = position_dodge(width = .5)) +
+  theme_linedraw() +
+  labs(x = "Deciles of predicted earning changes", y = "Mean actual earning changes within deciles", title = "Calibration plot for observations from Region 1 using deciles for better visibility")
+  
+```
+
+```{r ridgecalibration_ntiles_region2}
+
+num_tiles <- 10 
+cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$ridge_predictions_test, n=num_tiles))
+cps_df_log_test_grouped <- cps_df_log_test %>% 
+  dplyr::filter(region_large_unscaled==2) %>% 
+  group_by(ntile) %>% 
+  summarise(mean = mean(log_d_earn),
+            std = sd(log_d_earn), 
+            std_err=std/sqrt(dim(cps_df_log_test)[1]))
+  ggplot(cps_df_log_test_grouped) +
+  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                  size = 0.5,
+                  position = position_dodge(width = .5)) +
+  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                width = 0.4,
+                size = 0.75,
+                position = position_dodge(width = .5)) +
+  theme_linedraw() +
+  labs(x = "Deciles of predicted earning changes", y = "Mean actual earning changes within deciles", title = "Calibration plot for observations from Region 2 using deciles for better visibility")
+  
+```
+
+```{r ridgecalibration_ntiles_region3}
+
+num_tiles <- 10 
+cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$ridge_predictions_test, n=num_tiles))
+cps_df_log_test_grouped <- cps_df_log_test %>% 
+  dplyr::filter(region_large_unscaled==3) %>% 
+  group_by(ntile) %>% 
+  summarise(mean = mean(log_d_earn),
+            std = sd(log_d_earn), 
+            std_err=std/sqrt(dim(cps_df_log_test)[1]))
+  ggplot(cps_df_log_test_grouped) +
+  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                  size = 0.5,
+                  position = position_dodge(width = .5)) +
+  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                width = 0.4,
+                size = 0.75,
+                position = position_dodge(width = .5)) +
+  theme_linedraw() +
+  labs(x = "Deciles of predicted earning changes", y = "Mean actual earning changes within deciles", title = "Calibration plot for observations from Region 3 using deciles for better visibility")
+  
+```
+
+
+```{r ridgecalibration_ntiles_region4}
+
+num_tiles <- 10 
+cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$ridge_predictions_test, n=num_tiles))
+cps_df_log_test_grouped <- cps_df_log_test %>% 
+  dplyr::filter(region_large_unscaled==4) %>% 
+  group_by(ntile) %>% 
+  summarise(mean = mean(log_d_earn),
+            std = sd(log_d_earn), 
+            std_err=std/sqrt(dim(cps_df_log_test)[1]))
+  ggplot(cps_df_log_test_grouped) +
+  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                  size = 0.5,
+                  position = position_dodge(width = .5)) +
+  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
+                width = 0.4,
+                size = 0.75,
+                position = position_dodge(width = .5)) +
+  theme_linedraw() +
+  labs(x = "Deciles of predicted earning changes", y = "Mean actual earning changes within deciles", title = "Calibration plot for observations from Region 4 using deciles for better visibility")
+  
+```
+
+
+# Part II: Heterogeneity Analysis
+
+In part II, we use the prediction model we built from a general population in part I to predict wage changes in the Year Up sample, based on their observable characteristics. This gives us our estimate of what the wage changes of Year Up participants would have been had they not participated in the program.  
+
+## Steps 
+
+1) We load, clean and preprocess the Year-Up data. This includes making sure all the variables have the same names and are coded the same as in the CPS. It is important that the variables in the YearUp data are congruent with the CPS data, because we want to predict counterfactual wages in the Year-Up data from the model built in the CPS. 
+
+2) Using the ridge regression model, we predict wage changes for Year-Up participants and thereby build our "control group". 
+
+3) We compare the difference in mean actual outcomes with mean counterfactual predicted outcomes, by building a "treatment effect model". This gives us the treatment effect, i.e. the return to participating in Year Up on wage changes. 
+
+4) Next, we repeat the above exercise for subgroups, and look e.g. at how returns to Year Up differ for men and women. 
+
+## Data
+We begin by reading in the Year Up data. It comes in two separate files: the records on participants before they started Year Up are in a different dataset from than the post Year Up records. We need to load both and merge them on the "PACE_ID" - which is the unique person identifier. As previously in the case of CPS data, we further "enrich" this data with task and county data, that we merge to participants' occupations and counties respectively, to have richer information on both. The task data stems from Autor and Dorn's 2013 paper: "The Growth of Low-Skill Service Jobs and the Polarization of the US Labor Market" and described the routine, manual and abstract task intensity of occupations. More information about the data can be found [here](https://www.ddorn.net/data.htm). The additional location data comes from "Neighborhood Characteristics by County" in Opportunity Insight's data library which can be found [here](https://opportunityinsights.org/data/).
+
+Since our wage prediction model in the CPS uses these additional variables, we also need them in this dataset. 
+
+```{r read_data_2}
+data_folder <- "Datasets"
+save_folder <- "intermediate"
+
+# Load the pre- and post-YU data
+df_post<-fread("Datasets/20210119_YU_post_data.csv") #post Year Up records on individuals
+df_pre<-fread("Datasets/20210119_YU_pre_data.csv")   #pre Year Up records on individuals
+
+# Load the CPI data
+cpi <- read.csv("Datasets/cpi.csv") # yearly consumer price index with which we deflate earnings to USD 2010. 
+
+# Load onet crosswalk occupation classifications data
+df_xwalk<-fread("Datasets/onet_occ2010_crosswalk.csv") #Year Up occupations have been classified (by our internal algorithm, not shown here - from plein text to onet occupations. Because of our CPS wage prediction model, we need occupations classified with the CPS occ2010 classificaiton. We therefore use a so-called classification crosswalk, which is tells us what the corresponing occ2010 code to each o-net code is.)
+
+# Load occupation digit data
+occ1digit<-fread("Datasets/occ1digit.csv")
+
+# Load  task data
+yu_tasks<-fread("Datasets/tasks_2010.csv")
+
+# Load FIPS encoding data - to make sure we can merge the files as needed. 
+metro_fips<-fread("Datasets/fips_site_location.csv")
+
+# Load CPS regions data
+region<-fread("Datasets/state_to_region.csv")
+
+# Load county-level data
+county_vars<-fread("Datasets/count_level_covars.csv")
+
+```
+
+
+We first merge the pre- and post-YU data together by the person id (PACE_ID). Then, we add the CPI to the year records, in order to deflate wages and make them constant 2010 USD. Further, we add an occupational encoding crosswalk: Year Up occupations have been classified (by our internal NLP algorithm, not shown here) - from plein text to O NET occupations. Because of our CPS wage prediction model, we need occupations classified with the CPS occ2010 classificaiton. We therefore use a so-called classification crosswalk, which tells us what the corresponing occ2010 code to each O NET code is. We then add the relevant county-level variables to counties as well as task indices to occupations to the Year Up data. 
+
+```{r merge_data}
+
+# Merge the pre- and post-YU data
+yu_df <- merge(df_post, df_pre, 
+               by=c("PACE_ID", "Gender", "Race", "Age_at_Start_of_Cohort", 
+                    "State", "Site", "Edu"), 
+               all.x = FALSE, all.y = FALSE)
+yu_df <- yu_df %>% distinct(PACE_ID, .keep_all = TRUE) #there are a few duplicate pace_ids, which should not be the case - we drop them. 
+
+# Rename YU data to have the same names and encodings and CPS data. 
+yu_df <- yu_df %>%
+  mutate(sex=Male_Flag,
+         year_pre=Year-1,
+         year_post=Year,
+         age_pre=Age_at_Start_of_Cohort-1,
+         age2_pre=age_pre^2,
+         age_post=Age_at_Start_of_Cohort,
+         age2_post=age_post^2,
+         race_white= if_else(Race=="White",1,0),
+         race_black= if_else(Race=="Black or African American",1,0), 
+         race_asian= if_else(Race=="Asian",1,0),
+         edu_num= Edu,
+         experience=Exp_4, 
+         experience2=experience^2)
+
+# Unify naming for pre and post YU jobs and earnings
+yu_df <- yu_df %>%
+  mutate(occ_onet_pre=ONET_4_Job_preYU,
+         earnings_pre=ONET_4_Salary_pre_YU,
+         occ_onet_post=ONETCode_post_YU,
+         earnings_post=SAL_YU_POSTYU)
+
+# keep only variables of interest
+yu_df <- yu_df%>%
+  select(PACE_ID,Site,Cohort, sex, race_white, 
+         race_asian, race_black, edu_num, experience, experience2,
+         year_pre, age_pre,age2_pre, occ_onet_pre,earnings_pre,
+         year_post,age_post, age2_post,occ_onet_post,earnings_post)
+
+
+# reshape data from wide to "long", so that we have two entries per individual, pre and post.   
+yu_df_long<-reshape(yu_df, direction='long', 
+                    varying=c("age_pre", "age2_pre", "earnings_pre","occ_onet_pre","year_pre",
+                               "age_post", "age2_post","earnings_post", "occ_onet_post", "year_post"),
+                    timevar='prepost',
+                    times=c('1_pre', '2_post'),
+                    v.names=c('age', 'age2','earnings','occ_onet', 'year'),
+                    idvar='PACE_ID')
+
+```
+
+### Applying log transformation on wages and creation of outcome variable: change in log earnings
+We apply a log transformation on the pre and post real yearly earnings 1 and 2 (1 is pre and 2 is post), 'real_yearly_earnings_1' and 'real_yearly_earnings_2', such that the variable 'log_d_earn' is the log ratio of the 'real_yearly_earnings_2' to 'real_yearly_earnings_1' (i.e. log_d_earn = log(real_yearly_earnings_2/real_yearly_earnings_1)). This log transformation is appropriate because it deals with the positively skewed distribution of the yearly earnings variables. Also, note that while applying this log transformation, we add a delta of 0.001 to these real yearly earnings in order to prevent the log values from "exploding" and becoming NaNs in case the earnings have a value of 0.
+
+```{r merge_data2 }
+
+## Deflate wages (adjust for inflation) to USD 2010 real wages
+# Merge cpi & convert to real values with 2010 base rate
+yu_df_long <- left_join(yu_df_long,cpi, by="year", all.x = TRUE)
+
+yu_df_long <- yu_df_long  %>%
+  mutate(real_yearly_earnings=earnings/value)
+
+# log transformation of real yearly earnings (in levels), plus inserting a small data in case some earnings are 0. 
+
+yu_df_long<-yu_df_long %>%
+  mutate(real_yearly_earnings=if_else(real_yearly_earnings==0,0.001,real_yearly_earnings),
+         log_earnings=log(real_yearly_earnings))
+
+# Merge onet crosswalk to compare handle CPS occupation coding
+yu_df_long<-merge(yu_df_long, df_xwalk, by.x ="occ_onet", by.y ="onet_soc_code", all.x = TRUE)
+
+# Merge YU data with occupation coding data 
+yu_df_long<-merge(yu_df_long, occ1digit, by= "occ2010", all.x = TRUE)
+
+# Merge YU data with tasks data
+yu_df_long<- merge(yu_df_long,yu_tasks,by="occ2010",all.x = TRUE)
+
+# Merge fips encoding
+metro_fips<-metro_fips %>% select(-V4, county_fips) 
+yu_df_long<-merge(yu_df_long,metro_fips, by="Site", all.x = TRUE)
+
+# Merge county level info
+county_vars<-county_vars %>%
+  select(cty, county_name, cty_pop2000, cz, cz_name, cz_pop2000, intersects_msa,
+         cs00_seg_inc, cs00_seg_inc_pov25, cs00_seg_inc_aff75, cs_race_theil_2000,
+         gini99, poor_share, inc_share_1perc, frac_middleclass, 
+         rel_tot, cs_frac_black, cs_frac_hisp, unemp_rate, pop_d_2000_1980, 
+         lf_d_2000_1980, cs_labforce, cs_elf_ind_man, cs_born_foreign, mig_inflow,         
+         mig_outflow, pop_density, frac_traveltime_lt15, hhinc00, median_house_value, cs_educ_ba,  cs_fam_wkidsinglemom, crime_total, subcty_exp_pc, taxrate, tax_st_diff_top20)
+yu_df_long<-merge(yu_df_long,county_vars, by.x="fips", by.y = "cty", all.x = TRUE)
+
+# Get regions from CPS
+yu_df_long<-merge(yu_df_long, region, by.x ="state_fips", by.y ="statefip",all.x = TRUE)
+
+# Get values of occ2010 to restrict to in training data
+occuring<-paste(unique(yu_df_long$occ2010), collapse=",")
+
+# Get the occupations of YU partipants before the training program
+pre<-yu_df_long %>% filter(prepost=="1_pre")
+startocc<-paste(unique(pre$occ2010), collapse=",") # In the first tutorial, this is the vector on which we restrict which occupations we keep in the CPS data - i.e. all occuring starting occupations pre-YU in this data. 
+
+# Get the occupations of YU partipants after the training program
+post<-yu_df_long %>% filter(prepost=="2_post")
+endocc<-paste(unique(post$occ2010), collapse=",")
+
+```
+
+
+```{r log_transform_y}
+
+yu_df <- reshape(yu_df_long, direction='wide', 
+                idvar='PACE_ID',
+                timevar= "prepost")
+
+# Log earnings change
+yu_df <- yu_df %>%
+  mutate(log_d_earn=log_earnings.2_post - log_earnings.1_pre)
+
+# Now that we have generated the earnings change variable, we can keep only one line per individual, the pre-records are enough. Before we do that, let's generate a copy of the datasets with two record per individual, in case we still need it. 
+
+yu_df_copy <- yu_df #generate copy
+yu_df <- yu_df %>%
+  select(PACE_ID, log_d_earn,  log_earnings.2_post, log_earnings.1_pre,
+         real_yearly_earnings.1_pre,real_yearly_earnings.2_post, contains("1_pre")) #only keep "pre records"
+
+# Rename variables dropping their prefixes. 
+colnames(yu_df)<-c("PACE_ID","log_d_earn","log_earnings.2_post", "log_earnings.1_pre", "real_yearly_earnings.1_pre","real_yearly_earnings.2_post","state_fips","fips","Site","occ2010","occ_onet",                    "Cohort","sex", "race_white","race_asian","race_black","edu_num",
+                   "experience","experience2","age", "age2", "raw_earnings_pre", "year","value",
+                   "occ1digit",
+                   "RTIa","task_abstract","task_manual","task_routine","metfips",
+                   "metro_name", "County_name", "county_fips","state_name","county_name",
+                   "cty_pop2000", "cz","cz_name","cz_pop2000", "intersects_msa","cs00_seg_inc",
+                   "cs00_seg_inc_pov25", "cs00_seg_inc_aff75","cs_race_theil_2000",
+                   "gini99","poor_share","inc_share_1perc", "frac_middleclass", 
+                   "rel_tot","cs_frac_black", "cs_frac_hisp","unemp_rate","pop_d_2000_1980",
+                   "lf_d_2000_1980","cs_labforce","cs_elf_ind_man","cs_born_foreign",
+                   "mig_inflow","mig_outflow","pop_density","frac_traveltime_lt15","hhinc00",
+                   "median_house_value",
+                   "cs_educ_ba","cs_fam_wkidsinglemom","crime_total",
+                   "subcty_exp_pc","taxrate","tax_st_diff_top20", "region_large")
+
+```
+
+### Summary Statistics
+Our YU sample consists of all observations for whom we observe pre-and post Year Up (actual) wages, which are denoted by 'real_yearly_earnings_1' and 'real_yearly_earnings_2', which includes 1469 individuals. By design, the included variables and variable names are identical to those in the CPS data.
+
+```{r summary_stats_2,  message=FALSE, echo = TRUE}
+
+# Make a data.frame containing summary statistics of interest
+yu_dfsum<-yu_df %>% dplyr::select(log_d_earn, real_yearly_earnings.1_pre,real_yearly_earnings.2_post, where(is.numeric), -c(PACE_ID,value,RTIa, state_fips, fips, log_earnings.1_pre,log_earnings.2_post,cz, raw_earnings_pre,county_fips, metfips))
+summ_stats <- fBasics::basicStats(yu_dfsum)
+summ_stats <- as.data.frame(t(summ_stats))
+# Rename some of the columns for convenience
+summ_stats <- summ_stats[c("Mean", "Stdev", "Minimum", "1. Quartile", "Median",  "3. Quartile", "Maximum")]
+colnames(summ_stats)[colnames(summ_stats) %in% c('1. Quartile', '3. Quartile')] <- c('Lower quartile', 'Upper quartile')
+
+```
+
+```{r region and occupation summary tables}
+region_summary <- yu_df %>%
+  group_by(cz_name) %>%
+  summarise(count_yu=n(),
+            yu_percent_women=mean(!sex),
+            yu_percent_black=mean(race_black),
+            yu_percent_black_women=mean(race_black & !sex),
+            yu_mean_previous_earnings=mean(real_yearly_earnings.1_pre),
+            yu_median_previous_earnings=median(real_yearly_earnings.1_pre),
+            yu_log_d_earn_mean=mean(log_d_earn),
+            yu_log_d_earn_median=median(log_d_earn),
+            yu_age=mean(age),
+            yu_edu_num=mean(edu_num),
+            yu_mean_task_abstract=mean(task_abstract),
+            fraction_middleclass=mean(frac_middleclass),
+            fraction_middleclass=mean(cs_frac_black),
+            fraction_born_foreign=mean(cs_born_foreign),
+            pop_density=mean(pop_density),
+            median_house_value=mean(median_house_value),
+            tax_rate=mean(taxrate),
+            unemployment_rate=mean(unemp_rate),
+            inflow=mean(mig_inflow),
+            outflow=mean(mig_outflow),
+            gini=mean(gini99),
+            cty_pop2000=mean(cty_pop2000),
+            cz_pop2000=mean(cz_pop2000),
+            intersects_msa=mean(intersects_msa),
+            cs00_seg_inc=mean(cs00_seg_inc),
+            cs00_seg_inc_pov25=mean(cs00_seg_inc_pov25),
+            cs00_seg_inc_aff75=mean(cs00_seg_inc_aff75),
+            cs_race_theil_2000=mean(cs_race_theil_2000),
+            poor_share=mean(poor_share),
+            inc_share_1perc=mean(inc_share_1perc),
+            rel_tot=mean(rel_tot),
+            cs_frac_hisp=mean(cs_frac_hisp),
+            pop_d_2000_1980=mean(pop_d_2000_1980),
+            lf_d_2000_1980=mean(lf_d_2000_1980),
+            cs_labforce=mean(cs_labforce),
+            cs_elf_ind_man=mean(cs_elf_ind_man),
+            frac_traveltime_lt15=mean(frac_traveltime_lt15),
+            hhinc00=mean(hhinc00),cs_educ_ba=mean(cs_educ_ba),
+            cs_fam_wkidsinglemom=mean(cs_fam_wkidsinglemom),
+            crime_total=mean(crime_total),
+            subcty_exp_pc=mean(subcty_exp_pc),
+            tax_st_diff_top20=mean(tax_st_diff_top20)
+)
+
+#Using cz_name instead of metro_name to make sure it's the same
+#region_summary_test <- yu_df %>%
+#  group_by(cz_name) %>%
+#  summarise(count=n(),
+#            percent_women=mean(!sex),
+#            percent_black=mean(race_black),
+#            percent_black_women=mean(race_black & !sex))
+
+occupation_summary <- yu_df %>%
+  group_by(occ1digit) %>%
+  summarise(count_yu=n(),
+            yu_percent_women=mean(!sex),
+            yu_percent_black=mean(race_black),
+            yu_percent_black_women=mean(race_black & !sex),
+            yu_mean_previous_earnings=mean(real_yearly_earnings.1_pre),
+            yu_median_previous_earnings=median(real_yearly_earnings.1_pre),
+            yu_log_d_earn_mean=mean(log_d_earn),
+            yu_log_d_earn_median=median(log_d_earn),
+            yu_age=mean(age),
+            yu_edu_num=mean(edu_num),
+            fraction_middleclass=mean(frac_middleclass),
+            fraction_middleclass=mean(cs_frac_black),
+            fraction_born_foreign=mean(cs_born_foreign),
+            pop_density=mean(pop_density),
+            median_house_value=mean(median_house_value),
+            tax_rate=mean(taxrate),
+            unemployment_rate=mean(unemp_rate),
+            inflow=mean(mig_inflow),
+            outflow=mean(mig_outflow),
+            gini=mean(gini99)) %>%
+  arrange(-count_yu)
+
+write_csv(region_summary, "region_summary.csv")
+write_csv(occupation_summary, "occupation_summary.csv")
+
+occupation_region <- yu_df %>%
+  group_by(occ1digit,cz_name) %>%
+  summarise(count=n(),
+            yu_median_previous_earnings=median(real_yearly_earnings.1_pre),
+            yu_log_d_earn_median=median(log_d_earn))
+
+write_csv(occupation_region, "occupation_region.csv")
+```
+
+```{r summary_stats_table_2, message=FALSE, echo = TRUE}
+
+# Pretty-printing in HTML
+summ_stats_table <- kable(summ_stats, "html", digits = 2)
+kable_styling(summ_stats_table,
+              bootstrap_options=c("striped", "hover", "condensed", "responsive"),
+              full_width=FALSE)
+```
+
+
+### Filtering Observations
+
+Next we want to know if there are any outliers in our data, especially in the earnings variables. Outliers can arise from either data entry mistakes or can be true outliers, i.e. an individual who is not at all representative of the rest of the sample. We do not want such observations in the data, since they would bias the analysis. 
+However, before we filter out any observations, we perform some analysis to understand the effect of throwing out these observations on the overall data.
+
+As mentioned in the model building tutorial, an easy way to perform initial outlier analysis is to plot a histogram, so we begin by summarizing and plotting the histogram for the YU data variables of interest-- 'log_d_earn', which is the difference in yearly log wages, as well as  pre and post 'real_yearly_earnings', which we use to compute the yearly earnings difference. We then observe the histograms to identify any potential outliers that would require further investigation.  
+
+```{r raw_data_analysis_2}
+
+# Perform statistical summaries for the variables of interest
+summary(yu_df$log_d_earn)
+summary(yu_df$real_yearly_earnings.1_pre)
+summary(yu_df$real_yearly_earnings.2_post)
+
+
+# Plot the histograms for these variables
+ggplot(yu_df, aes(x=log_d_earn)) + 
+  geom_histogram(bins = 100)
+ggplot(yu_df, aes(x=real_yearly_earnings.1_pre)) + 
+  geom_histogram(bins = 100)
+ggplot(yu_df, aes(x=real_yearly_earnings.2_post)) + 
+  geom_histogram(bins = 100)
+
+```
+
+
+We can already see that in YU pre-wages, there are some extremely high incomes, that are likely data-entry mistakes. Nobody with incomes over one-million needs to go through the YU program!
+
+
+```{r filter_obs}
+# Get the min and max real yearly earnings for YU participants BEFORE the training program
+min(yu_df$real_yearly_earnings.1_pre)
+max(yu_df$real_yearly_earnings.1_pre)
+
+# Get the min and max real yearly earnings for YU participants AFTER the training program
+min(yu_df$real_yearly_earnings.2_post)
+max(yu_df$real_yearly_earnings.2_post)
+
+high_rye <- yu_df[yu_df$real_yearly_earnings.1_pre > 150000 | yu_df$real_yearly_earnings.2_post > 150000]
+
+# Percent change in income after YU training program
+((high_rye$real_yearly_earnings.2_post - high_rye$real_yearly_earnings.1_pre) / high_rye$real_yearly_earnings.1_pre) * 100 
+
+sum(yu_df$real_yearly_earnings.1_pre > 100000)
+# Percent of observations with real yearly earnings above USD 100,000 BEFORE the training program
+(sum(yu_df$real_yearly_earnings.1_pre>100000) / length(yu_df$real_yearly_earnings.1_pre)) * 100 
+
+sum(yu_df$real_yearly_earnings.1_pre>150000)
+# Percent of observations with real yearly earnings above USD 150,000 BEFORE the training program
+(sum(yu_df$real_yearly_earnings.1_pre>200000) / length(yu_df$real_yearly_earnings.1_pre)) * 100 
+
+sum(yu_df$real_yearly_earnings.1_pre>500000)
+# Percent of observations with real yearly earnings above USD 500,000 BEFORE the training program
+(sum(yu_df$real_yearly_earnings.1_pre>500000) / length(yu_df$real_yearly_earnings.1_pre)) * 100 
+
+sum(yu_df$real_yearly_earnings.1_pre>1000000)
+# Percent of observations with real yearly earnings above USD 1,000,000 BEFORE the training program
+(sum(yu_df$real_yearly_earnings.1_pre>1000000) / length(yu_df$real_yearly_earnings.1_pre))* 100 
+
+# Filter out observations with real yearly earnings above USD 150,0000
+yu_df = yu_df[yu_df$real_yearly_earnings.1_pre <= 150000]
+
+# Plot the histograms for these variables
+ggplot(yu_df, aes(x=log_d_earn)) + 
+  geom_histogram(bins = 100)
+```
+Observing the summary table, we notice that the maximum real yearly earning pre-YU training program is 1,484,798 which is most likely an outlier and implies that there might be other outliers. We then take a deeper dive into the data to further investigate any other potential outlier.  
+
+We observe that for the 4 observations with pre YU earnings of more than USD 150,000, there was a 97.8%, 99.0%, 96.6%, and 95.4% decrease in earnings after attending the YU training program which is most likely a result of data inputting errors. So, to avoid obfuscating our analysis and knowing that these observations are not true representatives of the YU participants, we filter out any observation with a real yearly earning higher than USD 150,000.
+
+We then plot the histogram again and notice that the range of 'log_d_earn' values significantly shrunk and that the distribution is less skewed than previously when we had the outliers in the data. 
+
+### Dealing with Missing Values 
+We next need to deal with any missing values in our dataset, since these would cause problems when we use the data to predict the counterfactual outcomes below. We deal with missing values in our dataset by checking how many there are. Since the share of missing value is relatively small, we we decide to drop the rows with missing values. Another way of dealing with missing values is to do an imputation, which is essentially a way of predicting the missing values based on the existing data. This leaves us with 1143 individuals in the Year Up data. We check what that does to our outcome variable, too. 
+
+```{r process_raw_data}
+# Deal with missing values
+
+# Check how many NAs there are in each variable 
+pct_na <- function(vec) {
+  mean(is.na(vec))
+}
+
+sapply(yu_df, pct_na)
+
+yu_df  <- na.omit(yu_df ) #drop them
+
+#summarize outcome after dropping NAs
+summary(yu_df$log_d_earn)
+# Plot the histograms for these variables
+ggplot(yu_df, aes(x=log_d_earn)) + 
+  geom_histogram(bins = 100)
+```
+
+
+### Preprocessing the Dataset to Run Model Predictions on YU Data
+We created a dataframe with the relevant columns for our wage prediction model and now convert certain variables, such as region_large (which represents the four regions in the US - North East, South, West and Mid-West), into categorical variables where appropriate and then convert those into dummy (or one-hot) variables. Note that with ML models, we want to avoid having too many dummy variables as certain models like random forests do not do well with them. Instead, we make sure that the variables with many categories, such as counties and occupations are instead well described using continous variables like the county neighborhood data and the task data. 
+
+Further, we again need to scale the continuous explanatory variables, the same way we did in the CPS. Indeed, we need to scale the data based on the moments of the CPS data, since we trained the model on that data and will be predicting on the YU data.
+
+```{r process_analysis_data}
+yu_df<- yu_df%>% rename(log_real_yearly_earnings_1=log_earnings.1_pre)
+
+yu_df = yu_df[, !("occ2010")] # dont need this variable
+
+# Convert variables that are not yet into factors 
+class(yu_df)<-class(as.data.frame(yu_df))
+categorical<-c("year", "region_large")
+yu_df[ ,categorical] <- lapply(yu_df[ , categorical] , factor)
+
+```
+
+```{r load_cps}
+
+# Load the CPS variables from memory
+vars <- readRDS(paste(save_folder, "vars.rds", sep="/"))
+cont <- vars %>% dplyr::select(-c(year, region_large, sex, race_white, 
+                                race_black, race_asian)) # picking continous variables by exclduing the few categorical variables
+
+# Select the variables from the YU data that match the ones from the CPS data
+cont<-c(colnames(cont))
+class(yu_df)<-class(as.data.frame(yu_df))
+
+# Load the preprocessed CPS data from memory because we preprocess the YU data
+# using the CPS training data preprocessing parameters
+pre_proc_val <- readRDS(paste(save_folder, "pre_proc_val.rds", sep="/"))
+yu_df[,cont] = predict(pre_proc_val, yu_df[,cont])
+
+```
+
+```{r make_dummies}
+
+# Make dummies from all categorical variables
+class(yu_df) <- class(as.data.frame(yu_df))
+col_vars<-colnames(vars)
+control_vars = col_vars
+
+cols_reg = c(control_vars,  'log_d_earn')
+dummies <- dummyVars(log_d_earn ~ ., data = yu_df[,cols_reg])
+yu_df_dummies = predict(dummies, newdata = yu_df[,cols_reg])
+
+# Manually create one missing category 
+yu_df_dummies <- as.data.frame(yu_df_dummies)
+yu_df_dummies <-yu_df_dummies %>% mutate(year.2006=0)
+
+# Make sure columns are in same order across the CPS and YU datasets
+cols <- readRDS(paste(save_folder, "cols.rds", sep="/"))
+yu_df_dummies <-yu_df_dummies %>% select(cols)
+
+```
+
+## Using the Ridge Model to Predict Counterfactual Wage Changes in the YU Data
+Finally, we can predict counterfactual wages for Year Up participants using our best model we built in the previous tutorial. As we have shown in the model building tutorial, the ridge model performed better than the other models we built and it was also well calibrated, which is why we use the ridge model trained on CPS data get the counterfactual wage change predictions. 
+
+We load the ridge model, that we saved in the previous tutorial and also remember that 0.001 was the optimal lambda that we obtained from crossfitting. We then use the ridge model and predict on the YU data as "new data". 
+
+We summarize the predicted values.
+
+```{r ridge_yu_preds}
+
+# Load the ridge regression model & optimal lambda from memory
+load(paste(save_folder, "ridge_reg_cps.rda", sep="/"))
+
+# Use ridge optimal lambda obtained from the model building tutorial
+optimal_lambda <- 0.001
+
+# Convert the YU variables to be used as input features into matrix form
+yu_df_xdummies = as.matrix(yu_df_dummies)
+
+# Predict on new YU data
+yu_log_d_earn_pred <- predict(ridge_reg_cps, s = optimal_lambda, newx = yu_df_xdummies)
+
+#summary(yu_df$log_d_earn)
+summary(yu_log_d_earn_pred)
+
+```
+
+## Building an Overall Treatment Effect Model 
+
+Now that we have the actual yearly earning changes of Year Up participants as well as the counterfactual yearly earning changes (earning changes had they not participated in the training program), we can do the main step of the analysis and compare the two outcomes. To that end, we simply compare the average in actual yearly earning changes to the average in counterfactual yearly earning changes. That is exactly equivalent to regressing yearly earning changes on a treatment indicator, where the treatment indicator shows whether the outcome is the actual (treatment) or counterfactual (control) outcome. 
+
+```{r treat_effect_model}
+# Define the treatment group in YU data
+treatment<-yu_df %>% mutate(treatment=1)
+
+# Define the control group in YU data
+control<- yu_df %>% mutate(treatment=0)
+control<- control %>% select(-log_d_earn)
+
+# Predict the difference in log yearly earnings for observations in the control group
+control$log_d_earn <- predict(ridge_reg_cps, s = optimal_lambda, newx = yu_df_xdummies)
+
+# Combine the treatment and control groups into one dataframe
+both<-as.data.frame(rbind(control,treatment))
+saveRDS(both, file = paste(save_folder, "yu_treatment_control.rds", sep="/") )
+
+# Regress the difference in log yearly earnings on the treatment group 
+ate<-lm(log_d_earn~treatment, data=both)
+# Summary statistics for the mean treatment effect
+summary(ate)
+
+# Get treatment effect by exponentiation of the coefficient of the treatment variable, which is in terms of log wage differences 
+exp(summary(ate)$coefficients[2,1])
+
+```
+
+The regression table shows that the difference in log earnings between t and t+1 is 0.470 for Year Up participants as compared to their counterfactual outcomes. We can convert this coefficient into the log odds ratio by taking the expectation, since our outcome is log(a)-log(b)=log(a/b) and get 1.60.
+Thus, there is a positive treatment effect of ~60% from the YU training program, i.e. the real yearly earnings of YU participants experience a 60% increase due to this training program, compared to what they otherwise would have got. 
+
+## Estimating Heterogeneous Treatment Effects for Subgroups 
+Remember that we are ultimately interested in whether certain subgroups in Year Up participants do better than others. We run one such subgroup analysis here here as an example, and then it will be up to you to investigate other potentially interesting subgroups. 
+
+### Treatment Effects by Gender
+
+There are two ways in which we can estimate treatment effects for different subgroups. The first version is to simply split the samples by gender and estimate their respective treatment effects. The second version is to estimate an interaction model, where we interact the treatment indicator with the gender variable. 
+
+Let's start with the first version: 
+
+#### Estimating the Treatment Effect for Male participants
+
+```{r male_treat_effect}
+
+ate<-lm(log_d_earn~treatment, data=subset(both,sex==1))
+
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+```
+
+So it looks like men have a treatment effect of 52% increase in earnings thanks to Year Up. 
+
+
+#### Estimating the Treatment Effect for Female participants
+```{r female_treat_effect}
+
+ate<-lm(log_d_earn~treatment, data=subset(both,sex==0))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+```
+Women on the other hand have an average increase of  71% in year over year earnings thanks to Year Up - that is quite a bit higher!
+
+#### Estimating an Interaction Model
+With such a large difference, it is likely that the difference in treatment effects for men and women is statistically significant. The way to formally test this is to compute confidence intervals (estimate +/- 1.96*standard errorr) around the treatment point-estimates from the standard errors in both regressions, and see whether the confidence intervals overlap. If they do not, then the difference is statistically significant. However, there is also a more direct way to see whether the difference is statistically significant - we can run a joint regression of the whole sample, and interact the treatment effect with gender.  
+
+Because of the way our two samples of treatment and control are designed in our case, (i.e. "treatment" and "control" are the same individuals, just with different outcomes - actual and counterfactual) those two approaches will give the same results. This is because the averages in covarariates across the two samples are the same. In the overall average treatment effect regression, this means you can add all the controls you want, and the treatment effect would not change. 
+
+If covariates were not the same on average across treatment and control groups, for the subgroup and the interaction effect results to be the same, one would have to interact all included variables with the gender variable.  Here the two approaches are identical. The main advantage of the interaction model is that we can see directly whether the difference in treatment effects is statistically significant. 
+
+```{r interacted_treat_effect}
+
+ate<-lm(log_d_earn~treatment + sex*treatment+sex, data = both)
+
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+exp(summary(ate)$coefficients[3,1])
+exp(summary(ate)$coefficients[4,1])
+
+```
+
+
+First, we see that the treatment effect coefficient is the same as in our female only model. That is exactly right: the treatment effect coefficient is the effect of treatment when the interaction term is 0, which is the case when sex==0, i.e. for women. Next, we see that the treatment:sex interaction is negative and significant! Taking the treatment effect coefficient and subtracting the interaction term, we get 0.53794-0.12140=0.41654, which is exactly the male only coefficient from the separate model. Hence, we have recovered the same numbers and know that their difference is statistically significant!
+
+It looks like women have a lot larger returns than men from Year Up!  Why might that be and what is driving that? This is what we will try to uncover in the third tutorial. 
+
+### Treatment Effects by Region
+
+The previous tutorial stated that since some machine learning algorithms do poorly with many dummies, categorical variables like location were expressed as continuous variables that describe the characteristics of the location. This poses a hurdle to exploring heterogeneity by location. In order to explore the location dimension, we will try a few proxies for location, such as population and poverty rate. Unfortunately, this analysis produces coefficients that are hard to interpret. More work is needed to understand which is the proper proxy for location. In the future, we may also try to merge the location dummies back into the data for use in this step (perhaps try region_large?).
+
+```{r location_effect}
+ate<-lm(log_d_earn~treatment + cty_pop2000 + cty_pop2000*treatment, data = both)
+
+summary(ate)
+
+paste0("Coefficient on Treatment")
+exp(summary(ate)$coefficients[2,1])
+paste0("Coefficient on County Population in 2000")
+exp(summary(ate)$coefficients[3,1])
+paste0("Coefficient on Interaction")
+exp(summary(ate)$coefficients[4,1])
+
+ate<-lm(log_d_earn~treatment + poor_share + poor_share*treatment, data = both)
+
+summary(ate)
+
+paste0("Coefficient on Treatment")
+exp(summary(ate)$coefficients[2,1])
+paste0("Coefficient on Poverty Rate")
+exp(summary(ate)$coefficients[3,1])
+paste0("Coefficient on Interaction")
+exp(summary(ate)$coefficients[4,1])
+
+```
+
+Here, we explore heterogeneity by occupation. Similar to location, the occupation dummies are expressed as continuous variables. Once again, we use proxies for occupation - measures of how abstract and how manual the tasks in the occupation are. In general, more abstract tasks require a higher education level to accomplish. When we regress earnings using the measure of abstractness, we see that the coeffficient on the treatment and the measure of abstractness are both positive and significant, as we expect them to be. A Year Up applicant coming from a previous occupation that requires more abstract tasks will earn more on average. However, the coefficient on the interaction term is negative and significant. This implies that YearUp is less effective for applicants that come from occupations with more abstract tasks. A possible interpretation for this fact is that these "smarter" applicants would have been able to find lucrative jobs even without going through the program, so the value added of YearUp is low. 
+
+We try the same analysis using the measure for how manual the tasks in an occupation are. We assume that occupations with a higher manual score requires less education, so we expect individuals coming from these jobs to benefit significantly from the program. In regression terms, this would translate to a positive interaction term. Running the regression, we find that the interaction term is negative, but not significant. More research is needed to understand these measures, and why the coefficient on the manual measure interaction term is not in the expected direction. Additionally, we hope to find a more systematic way to explore heterogeneity, in order to avoid issues with cherry picking.
+
+```{r occupation_effect}
+ate<-lm(log_d_earn~treatment + task_abstract + task_abstract*treatment, data = both)
+
+summary(ate)
+
+paste0("Coefficient on Treatment")
+exp(summary(ate)$coefficients[2,1])
+paste0("Coefficient on Abstract Task Measure")
+exp(summary(ate)$coefficients[3,1])
+paste0("Coefficient on Interaction")
+exp(summary(ate)$coefficients[4,1])
+
+ate<-lm(log_d_earn~treatment + task_manual + task_manual*treatment, data = both)
+
+summary(ate)
+
+paste0("Coefficient on Treatment")
+exp(summary(ate)$coefficients[2,1])
+paste0("Coefficient on Manual Task Measure")
+exp(summary(ate)$coefficients[3,1])
+paste0("Coefficient on Interaction")
+exp(summary(ate)$coefficients[4,1])
+
+```
+
+### Treatment Effects by Race
+
+#### Count
+race_white =  46
+race_asian  = 103
+race_black =  459
+race_other/not listed = 1083 - 46 - 103 - 459 = 475
+
+
+```{r race_effect}
+#White
+
+ate<-lm(log_d_earn~treatment, data=subset(both,race_white==1))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+#Asian
+
+ate<-lm(log_d_earn~treatment, data=subset(both,race_asian==1))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+#Black
+
+ate<-lm(log_d_earn~treatment, data=subset(both,race_black==1))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+#Non-Black
+ate<-lm(log_d_earn~treatment, data=subset(both,race_black==0))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+#Interaction Terms
+
+#White
+
+ate<-lm(log_d_earn~treatment + race_white*treatment+race_white, data = both)
+
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+exp(summary(ate)$coefficients[3,1])
+exp(summary(ate)$coefficients[4,1])
+
+#Asian
+
+ate<-lm(log_d_earn~treatment + race_asian*treatment+race_asian, data = both)
+
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+exp(summary(ate)$coefficients[3,1])
+exp(summary(ate)$coefficients[4,1])
+
+#Black
+
+ate<-lm(log_d_earn~treatment + race_black*treatment+race_black, data = both)
+
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+exp(summary(ate)$coefficients[3,1])
+exp(summary(ate)$coefficients[4,1])
+
+```
+
+### Treatment Effects by Age
+
+median(treatment$age) = -1.634626 = Age 19
+mean(treatment$age) = -1.63576 = Age 19
+
+#### Count
+table(treatment$age < -1.634626) = 730
+table(treatment$age > -1.634626)  = 402
+
+```{r age_effect}
+
+# Age of < -1.6 should be close to median of 19 years of age or less
+ate<-lm(log_d_earn~treatment, data=subset(both, age < -1.634626))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+# Age of > -1.6 should be close to median of 19 years of age or more 
+ate<-lm(log_d_earn~treatment, data=subset(both, age > -1.634626))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+#Interaction Terms
+
+ate<-lm(log_d_earn~treatment + age*treatment+age, data = both)
+
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+exp(summary(ate)$coefficients[3,1])
+exp(summary(ate)$coefficients[4,1])
+
+```
+
+### Treatment Effects by Years of Education
+
+#### Count
+12 years of education = 764
+14 years of education = 368
+
+```{r education_effect}
+
+#12 years of education
+ate<-lm(log_d_earn~treatment, data=subset(both,edu_num < 0))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+#14 years of education
+ate<-lm(log_d_earn~treatment, data=subset(both,edu_num > 0))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+#Interaction Terms
+ate<-lm(log_d_earn~treatment + edu_num*treatment+edu_num, data = both)
+
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+exp(summary(ate)$coefficients[3,1])
+exp(summary(ate)$coefficients[4,1])
+```
+### Treatment Effects by Years of Experiences
+
+#### Count
+3+ years of experience = 612
+<3 years of experience = 520
+
+```{r experience_effect}
+
+# > or = 3 years of experience 
+ate<-lm(log_d_earn~treatment, data=subset(both,experience > -1.38456474221906))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+# < 3 years of experience 
+ate<-lm(log_d_earn~treatment, data=subset(both,experience < -1.38456474221906))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+#Interaction Terms
+ate<-lm(log_d_earn~treatment + experience*treatment+experience, data = both)
+
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+exp(summary(ate)$coefficients[3,1])
+exp(summary(ate)$coefficients[4,1])
+
+```
+
+```{r cohort_effect}
+
+#Interaction Terms
+ate<-lm(log_d_earn~treatment + Cohort*treatment+Cohort, data = both)
+
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+exp(summary(ate)$coefficients[3,1])
+exp(summary(ate)$coefficients[4,1])
+
+# January start date
+ate<-lm(log_d_earn~treatment, data=subset(both,Cohort<"Jan."))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+# July start date 
+ate<-lm(log_d_earn~treatment, data=subset(both,Cohort>"Jan."))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+```
+
+```{r starting income_effect}
+
+#Count of quartiles
+length(which(treatment$real_yearly_earnings.1_pre<16853))
+length(which(treatment$real_yearly_earnings.1_pre>16853&treatment$real_yearly_earnings.1_pre<18709))
+length(which(treatment$real_yearly_earnings.1_pre<21675&treatment$real_yearly_earnings.1_pre>18709))
+length(which(treatment$real_yearly_earnings.1_pre<21675))
+
+# First quartile
+ate<-lm(log_d_earn~treatment, data=subset(both,real_yearly_earnings.1_pre<16853))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+#Second quartile
+ate<-lm(log_d_earn~treatment, data=subset(both,real_yearly_earnings.1_pre>16853&real_yearly_earnings.1_pre<18709))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+#Third quartile
+ate<-lm(log_d_earn~treatment, data=subset(both,real_yearly_earnings.1_pre<21675&real_yearly_earnings.1_pre>18709))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+#Fourth quartile
+ate<-lm(log_d_earn~treatment, data=subset(both,real_yearly_earnings.1_pre<21675))
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+
+#Interaction Terms
+ate<-lm(log_d_earn~treatment + real_yearly_earnings.1_pre*treatment + real_yearly_earnings.1_pre, data = both)
+
+summary(ate)
+exp(summary(ate)$coefficients[2,1])
+exp(summary(ate)$coefficients[3,1])
+exp(summary(ate)$coefficients[4,1])
+
+ate<-lm(log_d_earn~treatment + Cohort*treatment+Cohort, data = both)
+```
+
+
+# Part III: Decomposition
+
+In the previous tutorial, we found that women had larger returns to Year Up than men. In this tutorial, we want to know what drives this difference, and whether it can be explained by various factors, such as men's pre Year Up earnings or women's occupational choices. This is called a *decomposition*. There are many different decomposition methods. The one we use here is called Gelbach decomposition, after [Gelbach, (2016)](http://dx.doi.org/10.1086/683668).   
+
+Think of the example of the gender wage gap, *i.e.* the difference in earnings between men and women. The unconditional difference in mean earnings between men and women is currently around 20 percent in the United States - men have 20 percent higher average earnings overall [(see Blau and Kahn, (2016), for a study on the gender wage gap)](http://www.nber.org/papers/w21913). 
+
+However, around half of that, i.e. 10 percentage points in the difference, can be "explained" by other factors, such as women's labor force participation, working hours, occupational choice, family status or whether they have children. What we mean by "can be explained",  is that if we compare men and women with the same occupation, with the same employment status and working hours and the same family status - the raw gap diminishes to 10 percent. 
+
+Those factors can "account" for the difference - because men and women have different distributions of employment, occupation and family status. On the other hand, that also means that there is a residual 10 percent difference in earnings between men and women that we cannot explain away with observable variables. This difference may be due to discrimination, or preferences or any other factor that we as researchers, do not directy observe in the data. 
+
+The goal of a decomposition analysis, is to know how much of the explained difference can be attributed to which factor: of the 10 percentage points in explained variation of the gender pay gap, how much can be explained by differences in education, versus occupational choice, versus child bearing decisions?
+
+
+## Steps
+
+In the previous parts, we have seen that mens' returns to Year Up are significantly smaller than womens'. Why is that? In this part, we want to understand where this difference is coming from. What drives womens' higher returns to Year Up compared to men? What does that mean for Year Up's admittance strategy and program design? Is it that Year Up works less well for their male participants or is it just that women make greater gains relative to men?
+
+To answer these questions, we need to decompose the gender gap in program returns. To that end, we want to look at all the different components that go into the returns analysis (1) actual changes in wages, (2) counterfactual changes in wages, (3) the difference between the two.
+
+We take the following steps: \
+1) We run linear regressions of earnings changes on gender and other covariates. \
+2) Using a Gelbach decomposition method, we decompose the gender gap in earning changes by comparing the unconditional difference to a full model. 
+3) We explain the Gelbach decomposition more formally.\
+4) We explore what the next steps need to be. \
+
+```{r, echo = FALSE}
+# load cleaned CPS data
+save_folder <- "intermediate"
+
+# cps<-readRDS("cols.rds") #the cps sample we built the model on 
+yu_treatment_control <- readRDS(paste(save_folder, "yu_treatment_control.rds", sep="/")) #the constructed sample with alumni and counterfactuals
+```
+
+```{r,echo = FALSE}
+# class(cps)<-class(as.data.frame(cps))
+# categorical<-c("year","region_large","occ1digit")
+# cps[ , categorical] <- lapply(cps[ ,categorical] , factor)
+cps_vars<--readRDS(paste(save_folder, "vars.rds", sep="/"))
+```
+
+
+```{r,echo = FALSE}
+
+yu_treatment_control <- yu_treatment_control %>% rename(male=sex)
+yu_df<- yu_treatment_control %>% filter(treatment==1)
+
+
+yu_df <- dummy_cols(yu_df, select_columns = 'occ1digit')
+
+```
+
+## Correlations
+```{r,echo = TRUE }
+outcome<- "log_d_earn"#"log_d_earn"#""
+
+male<- c("male")#,#"log_real_yearly_earnings_1")
+
+# cps <- dummy_cols(cps, select_columns = 'occ1digit')
+occ_group1 <-yu_df %>%
+  select(tidyselect::vars_select(colnames(cps_vars), starts_with('occ1digit_', ignore.case = TRUE)))
+occupation<-colnames(occ_group1)
+occupation<-occupation[occupation!="occ1digit_transport"] 
+
+tasks<-c("task_abstract","task_routine","task_manual" )
+background1<-c("age","race_white","race_black","race_asian","edu_num")
+
+occexp<- c("experience",tasks)#,occupation)
+            
+
+region<-c("cty_pop2000","cz_pop2000","intersects_msa",
+                    "cs00_seg_inc","cs00_seg_inc_pov25","cs00_seg_inc_aff75",
+                    "cs_race_theil_2000","gini99","poor_share","inc_share_1perc",
+                    "frac_middleclass","rel_tot","cs_frac_black",
+                    "cs_frac_hisp","unemp_rate","pop_d_2000_1980","lf_d_2000_1980",
+                    "cs_labforce","cs_elf_ind_man","cs_born_foreign","mig_inflow",
+                    "mig_outflow","pop_density","frac_traveltime_lt15","hhinc00",
+                    "median_house_value","cs_educ_ba",
+                    "cs_fam_wkidsinglemom","crime_total","subcty_exp_pc",
+                    "taxrate","tax_st_diff_top20")
+
+```
+
+When doing decompositions, as in this case a gender gap decomposition, it is useful to know how the variables in our data are correlated with one another. This helps to get a first idea of which variables may be influencing the gap and how. Presenting pairwise correlations is easy with the `corrplot` function from the `corrplot` package. On the table below, if the (unadjusted) p-value for a pair of variables is less than 0.05, its square is not colored. 
+
+Note that here we are excluding the geography variables and occupation groups for better readability of the plot.
+
+```{r cor plot, echo = TRUE, fig.width=5, fig.height=5, warning=FALSE}
+# Note: if the plot looks too cramped, try increasing fig.width and fig.height in the line above
+yu_dfsum<-yu_df %>% dplyr::select(log_d_earn, real_yearly_earnings.1_pre,  real_yearly_earnings.2_post, where(is.numeric), -c(PACE_ID,value,RTIa, state_fips, fips,treatment, log_real_yearly_earnings_1,cz,county_fips, metfips))
+
+yu_dfsum <- yu_dfsum %>% dplyr::select(-c(starts_with('occ1digit_', ignore.case = TRUE),all_of(region)))
+pairwise_pvalues <- psych::corr.test(yu_dfsum, yu_dfsum)$p
+corrplot(cor(yu_dfsum),
+         type="upper",
+         tl.col="black",
+         order="hclust",
+         tl.cex=1,
+         addgrid.col = "black",
+         p.mat=pairwise_pvalues,
+         sig.level=0.05,
+         number.font=10,
+         insig="blank")
+```
+
+## The gender difference in post YU earning changes
+### Regression Analysis
+
+**Outcome:  Difference in log earnings between t and t+1 for program particpants** \
+Since we are interested in decomposing the gender gap in treatment outcomes (Year Up returns), which in itself is a composite product of actual wage changes and counterfactual wage changes, it is instructive to start with looking at the gap in these separates building blocks first.  Let's start with simple linear regressions on the difference in log earnings between t and t+1 for program participants (actual observed wage changes of pre and post earnings). 
+
+```{r,echo = TRUE}
+outcome<- "log_d_earn"
+lm1<- as.formula(
+  paste(outcome,
+        paste(c(male), collapse = " + "),
+        sep = " ~ "))
+model1<-lm(lm1, data = yu_df)
+
+lm2<- as.formula(
+  paste(outcome,
+        paste(c(male,background1), collapse = " + "),
+        sep = " ~ "))
+model2<-lm(lm2, data = yu_df)
+
+lm3<- as.formula(
+  paste(outcome,
+        paste(c(male,background1,occexp), collapse = " + "),
+        sep = " ~ "))
+model3<-lm(lm3, data = yu_df)
+
+lm4<- as.formula(
+  paste(outcome,
+        paste(c(male,background1,occexp,region), collapse = " + "),
+       sep = " ~ "))
+model4<-lm(lm4,  data = yu_df)
+
+lm5<- as.formula(
+  paste(outcome,
+        paste(c(male,background1,occexp,region, "log_real_yearly_earnings_1"), collapse = " + "),
+       sep = " ~ "))
+model5<-lm(lm5,  data = yu_df)
+```
+
+```{r,  echo = TRUE, results = 'asis'}
+stargazer(model1, model2,model3, model4,model5,
+          title="OLS regression of difference in log earnings between t and t+1 for program particpants, consecutively adding more covariates",
+          type = 'html',
+          omit=c(background1,occexp,region,"log_real_yearly_earnings_1"),
+          df = FALSE,
+          add.lines = list(c("Demographics", "No", "Yes", "Yes", "Yes","Yes"),c("Occupation+Experience", "No", "No","Yes","Yes", "Yes"),  c("Local labor market characteristics", "No", "No", "No", "Yes","Yes" ), c("Earnings at t", "No", "No", "No", "No","Yes")),
+          notes.append = FALSE,
+          notes = c("Dependent variable: change in log earnings.","Significance level: * p$<$0.10, ** p$<$0.05, *** p$<$0.01. For further notes, see text." )
+)
+
+```
+
+The regression table shows results from 5 linear regressions, in each of which we keep adding more controls, which means that we add more variables beyond male to the regression.
+
+- Column 1 includes just the male coefficient, Column 2 additionally includes age, race white, race asian, race black and years of schooling. Column 3 additionally to the coviarites in column 2 includes experience, occupation group indicators and task measures. Column 4 also includes YU site location labor market characteristics like population density,  local unemployment rates or average schooling levels. Column 5 finally additionally controls for pre-treatment earnings. 
+<p>
+
+
+Column 1  is the univariate regression of difference in log earnings on male, i.e. the unconditional gender wage change gap: 
+
+$$log(\Delta y_{i})= \beta_1 Male + \epsilon{_i}$$
+
+- The male coefficient tells us that overall on average, men have higher earnings changes compared to women.
+Specifically, this unconditional gender difference on the difference in log earnings between t and t+1 for Year up candidates is 0.061 (to convert the coefficient to the log odds ratio (since our outcome is log(a)-log(b)=log(a/b), we can take the expoential and get: exp(0.042)=1.043), i.e. the ratio of male to female earning changes is 1.043. In other words men have 4.3% higher YOY earning changes before and after YU than females. \
+
+
+- In columns 2 to 5, we consecutively add more variables to the regression, as denoted in the bottom rows of the table and explained in the notes above. 
+
+$$log(\Delta y_{i})= \beta_1 Male + \sum_{k=1}^K\beta_k Z_{ik}+  \epsilon{_i}$$
+
+- We do not report the coefficients to those other variables, because we are not interested in them, they are merely "controls".  "Controlling" for a covariate means you add it to a regression and thereby net out the effect this variable may have on the outcome. It is as if you were re-weighting the sample to have the same distribution with respect to the control variable. Here, we do not actually care what the effect of the control variable itself is. 
+
+- In column 2 we add demographics such as the race, education and age of the individual to the regression.  This decreases the male coefficient to 0.034 - i.e. holding constant race, education and age, decreases the difference in earning changes for men to 3.4%. Or: if race, education and age were on average the same across men and women in our sample, the difference in gender for earnings changes would be 0.034.  
+
+- What that means is that race, education and age are correlated with both male and the outcome, and ignoring those variables makes the gender gap larger that it should be (we "overestimate" the gender gap), while in truth it may be the case that men are older in our sample and older people have higher earning changes - and therefore some of the effect should be attributed to age rather than gender.  
+
+
+- Column 5 shows that in the "the full model", controlling for everything we think should go into that regression, the gender gap is at 0.035, or 3.5% (=exp(0.035)) greater change in earnings for men. That is smaller than in column 1 but larger than in column 2.  Holding constant age, education, experience, race, prior occupation group and task measures within that occupation, location characteristics and previous wages, we reduce the unconditional gender gap. 
+
+### Gelbach Decomposition of Year Up wage changes
+
+We next want to know, which covariate contributes how and how much, in reducing the unconditional gender difference in earnings changes.
+
+Gelbach [(Gelbach, 2016)](http://dx.doi.org/10.1086/683668) proposes a decomposition method that compares a baseline model with just our coefficient of interest (here male), with a full model including all relevant variables and decomposes the contribution of all the variables to the changes in the coefficient of interest.
+
+As we see in the regression table, controling for or including more variables in the regression, decreases the gender gap (it decreases the size of the positive and significant coefficient of male on earning changes), from 6.3% to 5.5% higher average earning changes for men compared to women after Year Up. 
+
+<p>
+
+```{r,  echo = TRUE, results = 'asis'}
+
+dec_long_2 <- dec_covar(object = model5, var_main = c("male"), format = "long", add_coefs = TRUE, conf.int = TRUE)
+
+# add occupation group
+ dec_long_2a<-dec_long_2 %>%
+   mutate(group= if_else(covariate %in% c("age", "age2"), "age",
+                         if_else(covariate %in% c("race_white", "race_black", "race_asian"), "race",
+                                if_else(covariate %in% c("experience", "experience2"), "experience",
+                                        if_else(covariate %in% c("log_real_yearly_earnings_1"), "pre-earnings",
+   if_else(covariate %in% occupation, "occupation_group",
+           if_else(covariate %in% tasks, "occupation_tasks",
+           if_else(covariate %in% region, "regional",   
+                         "education"))))))))
+# 
+# 
+sumthose<-  c("beta_K", "beta_K_low", "beta_K_high",
+              "gamma","gamma_low", "gamma_high", "delta")
+
+keepthose<- c("beta_var_base", "beta_var_full")
+
+dec_long_2b <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(sumthose)), funs(sum), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2c <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(keepthose)), funs(max), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2d <-left_join(dec_long_2b,dec_long_2c,by="covariate")
+
+dec_long_2d$variable<-c(rep("male", times=(dim(dec_long_2d)[1])))
+
+plot_dec(dec_long_2d) +
+   ggtitle("Effect of each covariate group on the male coef")
+```
+
+
+<p>
+The plot depicts the differences in the male coefficients between column 1 and 5 in the regression table above.  
+
+- Model base (black vertical line) represents the size of the male coefficient in the univariate regression of male difference in earnings changes, i.e. the unconditional gender wage change gap in column 1. 
+- Model full (dotted blue vertical line)  represents the size of the male coefficient in the specification in column 5, where we also control for (i.e. include as other covariates in the regression) a host of factors such as age, experience, race, prior occupation group, location characteristics and pre earnings. 
+
+As noted above, the unconditional difference, i.e. the male coefficient in column 1 is 0.042 while the male coefficient in the full model is reduced to 0.035. This also means that we "explain" 0.007 log points of the gender gap through the extra controls. This is the gap between the black and blue line. 
+
+How do the included covariates contribute to that change in the coefficient? To better read the results, we group covariates together (by summing over them). Here, we group the age terms, race indicators, years of education, experience, occupation grups, occupational tasks and all regional covariates together. 
+
+The length of the horizontal arms going from the full model indicate the contribution of each variable (-group) to the male coefficient in the full model. It tells us what the male coefficient would be, if
+(conditional on all the other variables in the model) the means of that variable were the same across males and females. That is, if we were to re-weight our sample such that it had equal means for men and women in the respective covariate the dot of that covariate arm would be the size of the male coefficient. 
+
+- For example, all else constant, if the distribution of age were the same across both males and females in YU participants, the gender gap would be 0.009 log points smaller, so would be 0.033. That is, as we can see, actually smaller than the full model coefficient ends up being. We can also say that age explains 0.009 log points of the gender gap. The reason why the male coefficient ends up being larger than the respective race, age or location contributions, is because other covariates "pull" the male coefficient into the opposite direction. 
+
+- Earnings at year t, has the opposite effect, meaning that controlling for that factor makes the gender gap larger: If males and females had the same pre-treatment earnings in our sample, the gap would be even larger at 7%.
+
+
+### Gamma-beta plot
+
+The result that certain covariates would increase the gender gap as opposed to reducing it, can be counter-intuitive. How come some variables have a positive and others a negative contribution to explaining the variation in the gender gap? To better understand where this result comes from, it is instructive to look at the two components that make up this "contribution"  $\delta$ (delta) here - $\gamma$ and $\beta$ (gamma and beta). (We explain this more formally below, too).  
+
+
+- Beta denotes how the covariate is directly correlated with the outcome (e.g. how age is correlated with earnings changes), 
+- While gamma denotes how the covariate is correlated with gender (how age is correlated with male).
+- The size of the bubbles represent the absolute size of delta (how much age contributes in explaining the explainable gender gap). 
+
+<p>
+<center>
+```{r, echo = TRUE}
+dec_long_2<-dec_long_2 %>%
+  filter(!(covariate %in% c(region, colnames(occ_group1))))
+
+plot_gamma_beta(dec_long_2, add_CI = TRUE) +
+  ggtitle("Covariate impact: direct (beta) and indirect (gamma) impact")
+```
+(For better visibility, we take out the regional covariates and occupation group dummies here.) 
+</center>
+<p>
+
+Let's inspect a few covariates with different beta and gammas in turn, to understand what can drive the sign and size of delta. 
+
+- Starting with age, we can see that both beta and gamma are positive, meaning that age is both positively correlated with earning changes (beta, direct effect) and with male (gamma, indirect effect). It means that older individuals have higher earning changes, and that the men in our sample are older than females. If males and females in our sample were the same age on average, that would reduce the gender gap. 
+
+- When we do not control for age, the male-female gap in earning changes is larger than it actually is when we compare individuals of equal age. The larger raw difference can therefore be attributed to the difference in age between men and women in our sample and the fact that older individuals see greater changes (both needs to be true, otherwise the age difference in the sample would be irrelevant if age and earning were unrelated). 
+
+- For pre-treatment earnings (log_real_yearly_earnings_1), gamma is positive, but beta is negative, meaning that men have higher pre-treatment earnings, but higher pre-treatment earnings are associated with lower earnings changes. This means that if the distribution of pre-treatment earnings was the same across males and females in our sample, the gender gap would be even larger. 
+
+- For black, both beta and gamma are negative, meaning that black participants have smaller earning changes, and more blacks in our sample are female than male. If the share of blacks across males and females in our sample were the same, we would see a smaller gender gap. 
+
+This shows that in order to understand what drives the decomposition pieces, we really need to  understand the covarariances between both the omitted variable and the outcome and the omitted variable and the coefficient (male here) in question.
+<p>
+
+
+## Gelbach decomposition formally
+
+For those interested in the foundations, this section lays out the Gelbach decomposition more formally.
+
+In a regression where we are interested in the effect of some variable X on Y, where we know that a third variable Z is also related to Y and X but where we do not include that Z, Z is an "omitted variable". Think of our above example, where male is our X, earning changes our Y and Z is age. When we omitted age from the regression, some of the effect of age on earnings was wrongly attributed to male, because male and age are positively correlated (as we saw in both the correlation plot, as well as the gamma-beta plot). In econometrics, we call this an "omitted variable bias", i.e. a biased estimate of some true effect, because you are not controlling for a variable you should be controlling for. 
+
+
+Gelbach's decomposition, essentially decomposes the omitted variable bias from excluding other variables into their respective contributions. 
+
+For illustration, take  the two regression equations below,  representing a full and a baseline model, respectively. Let's assume that the "missing" variables $Z_{i,s}$ in the base model are black and age. 
+
+(1):
+\begin{equation}
+ ln(changeEarnings)_{sit}= \beta_1^{base}Male+ \epsilon_{sit}
+\end{equation}
+
+
+(2):	
+
+\begin{equation}\label{eq:gel1}
+	ln(changeEarnings)_{sit}= \beta_1^{full}Male+\beta_2Z_{i,s}+ \epsilon_{sit} 
+\end{equation}
+
+
+where (1) is the baseline model, (2) is the "full" model here. 
+
+$\beta_1^{base}$ then includes both the "true" effect of male on earnings, as well as the omitted variable bias: 
+	
+	
+\begin{equation}
+\beta_1^{base}= \beta_1+\delta_{Male}= \beta_1+\Gamma\beta_2
+\end{equation}
+
+ The difference in $\beta_1^{base}$ and $\beta_1^{full}$ is exactly $\delta_{Male}$ - and $\delta_{Male}$ is the "omitted variable bias".  $\delta_{Male}$ is made up of $\Gamma\beta_2$ of all omitted variables. $\Gamma$ is the matrix of coefficients from projecting the columns of $Z_{i,s}$ on $Male$, i.e. here how male is correlated with age and black. So \Gamma comes from regressions of:
+\begin{equation}
+	Black= \Gamma_0^{Black} +Male\Gamma_{Male}^{Black}+ W
+\end{equation}
+\begin{equation}\label{eq:gel5}
+	Age= \Gamma_0^{age} +Male\Gamma_{Male}^{age}+ W
+\end{equation}
+
+where W are residuals.
+The overall $\delta_{Male}$ can hence be decomposed into the contributions of the different variables that are omitted:
+
+\begin{equation}\label{eq:gel6}
+\beta_1^{full}-\beta_1^{base} = \delta_{Male}=\underbrace{\beta_2^{Black}\Gamma_{Male}^{Black}}_{\text{Black contribution}}+\underbrace{\beta_2^{age}\Gamma_{Male}^{age}}_{\text{age contribution}}= \delta_{male}^{Black} + \delta_{male}^{age} 
+\end{equation}
+	
+What this decomposition tells us is how much of the male gap is explained by variation in black and age, $\delta_{male}^{Black}$ and $\delta_{male}^{age}$ are their respective components of the explained part (the part that goes away after controlling for those covarariates). These "contributions" always have the same unit as the outcome - in our case we are decomposing the changes in log earnings- so the $\delta$s are can also be interpreted as their contribution in explaining the gender gap in log points.  
+
+As we know from the analysis above (gamma-beta plot), each $\delta$ is a product of $\beta$ and $\gamma$ - the respective direct effect (how the covariates is correlated with the outcome) and indirect effect (how the covariate is correlated with the main covariate of interest we are decomposing).
+
+
+One nice feature of the Gelbach decomposition is that the deltas are additive, which means you can group them together into meaninful groups and  look at their joint contribution. In our example below we e.g. group together the many location characteristic variables into one "region" group - we simply want to know how controling for regional characteristics in general impacts the gender gap, not each single one of them. This tremendously facilitates illustration, discussion and therefore usefulness of the decomposition. 
+
+A word of caution and the reason why we do the Gelbach decomposition: after having seeing the regression table above, where we consecutively added more controls,  you may be tempted to say "Why can I not simply consecutively add each covariate to a regression and look at how the coefficient changes based on adding the extra control"? This used to indeed be common practice among empirical researchers. However, a main point of Gelbach's paper (you should take a look at the paper itself, you can find it in the course materials) was to show the flaw in such an approach. It turns out that it matters a lot in which order you add covariates to the model (e.g in the regression table above, we could have either first added location covariates in one regression and then add occuation covariates or the other way around). That is why Gelbach proposes to compare a full and a baseline model and properly decompose the contributions of all additional covariates to the coefficient in the base model. 
+
+## Gender Decomposition
+
+### Gender - Counterfactual Predictions
+
+The tutorial took us through the steps of decomposing the change in actual wages. This was accomplished by selecting the subset "treatment=1" in the "yu_treatment_control" dataframe. To do the same analysis for the counterfactual, we select the subset "treatment=0".
+
+```{r, echo=FALSE}
+yu_df_counter <- yu_treatment_control %>% filter(treatment==0)
+yu_df_counter <- dummy_cols(yu_df_counter, select_columns = 'occ1digit')
+```
+
+
+```{r,echo = TRUE}
+outcome<- "log_d_earn"
+lm1<- as.formula(
+  paste(outcome,
+        paste(c(male), collapse = " + "),
+        sep = " ~ "))
+model1<-lm(lm1, data = yu_df_counter)
+
+lm2<- as.formula(
+  paste(outcome,
+        paste(c(male,background1), collapse = " + "),
+        sep = " ~ "))
+model2<-lm(lm2, data = yu_df_counter)
+
+lm3<- as.formula(
+  paste(outcome,
+        paste(c(male,background1,occexp), collapse = " + "),
+        sep = " ~ "))
+model3<-lm(lm3, data = yu_df_counter)
+
+lm4<- as.formula(
+  paste(outcome,
+        paste(c(male,background1,occexp,region), collapse = " + "),
+       sep = " ~ "))
+model4<-lm(lm4,  data = yu_df_counter)
+
+lm5<- as.formula(
+  paste(outcome,
+        paste(c(male,background1,occexp,region, "log_real_yearly_earnings_1"), collapse = " + "),
+       sep = " ~ "))
+model5<-lm(lm5,  data = yu_df_counter)
+```
+
+```{r,  echo = TRUE, results = 'asis'}
+stargazer(model1, model2,model3, model4,model5,
+          title="OLS regression of counterfactual difference in log earnings between t and t+1 for program particpants, consecutively adding more covariates",
+          type = 'html',
+          omit=c(background1,occexp,region,"log_real_yearly_earnings_1"),
+          df = FALSE,
+          add.lines = list(c("Demographics", "No", "Yes", "Yes", "Yes","Yes"),c("Occupation+Experience", "No", "No","Yes","Yes", "Yes"),  c("Local labor market characteristics", "No", "No", "No", "Yes","Yes" ), c("Earnings at t", "No", "No", "No", "No","Yes")),
+          notes.append = FALSE,
+          notes = c("Dependent variable: predicted change in log earnings.","Significance level: * p$<$0.10, ** p$<$0.05, *** p$<$0.01. For further notes, see text." )
+)
+
+```
+
+```{r,  echo = TRUE, results = 'asis'}
+
+dec_long_2 <- dec_covar(object = model5, var_main = c("male"), format = "long", add_coefs = TRUE, conf.int = TRUE)
+
+# add occupation group
+ dec_long_2a<-dec_long_2 %>%
+   mutate(group= if_else(covariate %in% c("age", "age2"), "age",
+                         if_else(covariate %in% c("race_white", "race_black", "race_asian"), "race",
+                                if_else(covariate %in% c("experience", "experience2"), "experience",
+                                        if_else(covariate %in% c("log_real_yearly_earnings_1"), "pre-earnings",
+   if_else(covariate %in% occupation, "occupation_group",
+           if_else(covariate %in% tasks, "occupation_tasks",
+           if_else(covariate %in% region, "regional",   
+                         "education"))))))))
+# 
+# 
+sumthose<-  c("beta_K", "beta_K_low", "beta_K_high",
+              "gamma","gamma_low", "gamma_high", "delta")
+
+keepthose<- c("beta_var_base", "beta_var_full")
+
+dec_long_2b <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(sumthose)), funs(sum), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2c <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(keepthose)), funs(max), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2d <-left_join(dec_long_2b,dec_long_2c,by="covariate")
+
+dec_long_2d$variable<-c(rep("male", times=(dim(dec_long_2d)[1])))
+
+plot_dec(dec_long_2d) +
+   ggtitle("Effect of each covariate group on the male coef")
+```
+
+### Gender - Difference in actual vs counterfactual change in earnings
+
+Finally, to get the difference in actual vs counterfactual earnings, we take a simple difference. This was accomplished in code by reshaping the yu_treatment_control dataframe from long to wide, using the "treatment" variable as the key. Then, the actual column was subtracted by the counterfactual column to produce the change column, which is the outcome variable in the decomposition analysis.
+
+```{r, echo=FALSE}
+yu_df_diff <- tidyr::spread(yu_treatment_control, treatment, log_d_earn)
+names(yu_df_diff)[names(yu_df_diff)=="0"] <- "log_d_earn_counterfactual"
+names(yu_df_diff)[names(yu_df_diff)=="1"] <- "log_d_earn_actual"
+yu_df_diff$log_d_earn_change <- (yu_df_diff$log_d_earn_actual - yu_df_diff$log_d_earn_counterfactual)
+yu_df_diff <- dummy_cols(yu_df_diff, select_columns = 'occ1digit')
+```
+
+```{r,echo = TRUE}
+outcome<- "log_d_earn_change"
+lm1<- as.formula(
+  paste(outcome,
+        paste(c(male), collapse = " + "),
+        sep = " ~ "))
+model1<-lm(lm1, data = yu_df_diff)
+
+lm2<- as.formula(
+  paste(outcome,
+        paste(c(male,background1), collapse = " + "),
+        sep = " ~ "))
+model2<-lm(lm2, data = yu_df_diff)
+
+lm3<- as.formula(
+  paste(outcome,
+        paste(c(male,background1,occexp), collapse = " + "),
+        sep = " ~ "))
+model3<-lm(lm3, data = yu_df_diff)
+
+lm4<- as.formula(
+  paste(outcome,
+        paste(c(male,background1,occexp,region), collapse = " + "),
+       sep = " ~ "))
+model4<-lm(lm4,  data = yu_df_diff)
+
+lm5<- as.formula(
+  paste(outcome,
+        paste(c(male,background1,occexp,region, "log_real_yearly_earnings_1"), collapse = " + "),
+       sep = " ~ "))
+model5<-lm(lm5,  data = yu_df_diff)
+```
+
+```{r,  echo = TRUE, results = 'asis'}
+stargazer(model1, model2,model3, model4,model5,
+          title="OLS regression of counterfactual difference in log earnings between t and t+1 for program particpants, consecutively adding more covariates",
+          type = 'html',
+          omit=c(background1,occexp,region,"log_real_yearly_earnings_1"),
+          df = FALSE,
+          add.lines = list(c("Demographics", "No", "Yes", "Yes", "Yes","Yes"),c("Occupation+Experience", "No", "No","Yes","Yes", "Yes"),  c("Local labor market characteristics", "No", "No", "No", "Yes","Yes" ), c("Earnings at t", "No", "No", "No", "No","Yes")),
+          notes.append = FALSE,
+          notes = c("Dependent variable: predicted change in log earnings.","Significance level: * p$<$0.10, ** p$<$0.05, *** p$<$0.01. For further notes, see text." )
+)
+
+```
+
+```{r,  echo = TRUE, results = 'asis'}
+
+dec_long_2 <- dec_covar(object = model5, var_main = c("male"), format = "long", add_coefs = TRUE, conf.int = TRUE)
+
+# add occupation group
+ dec_long_2a<-dec_long_2 %>%
+   mutate(group= if_else(covariate %in% c("age", "age2"), "age",
+                         if_else(covariate %in% c("race_white", "race_black", "race_asian"), "race",
+                                if_else(covariate %in% c("experience", "experience2"), "experience",
+                                        if_else(covariate %in% c("log_real_yearly_earnings_1"), "pre-earnings",
+   if_else(covariate %in% occupation, "occupation_group",
+           if_else(covariate %in% tasks, "occupation_tasks",
+           if_else(covariate %in% region, "regional",   
+                         "education"))))))))
+# 
+# 
+sumthose<-  c("beta_K", "beta_K_low", "beta_K_high",
+              "gamma","gamma_low", "gamma_high", "delta")
+
+keepthose<- c("beta_var_base", "beta_var_full")
+
+dec_long_2b <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(sumthose)), funs(sum), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2c <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(keepthose)), funs(max), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2d <-left_join(dec_long_2b,dec_long_2c,by="covariate")
+
+dec_long_2d$variable<-c(rep("male", times=(dim(dec_long_2d)[1])))
+
+plot_dec(dec_long_2d) +
+   ggtitle("Effect of each covariate group on the male coef")
+```
+
+```{r, echo = TRUE}
+dec_long_2<-dec_long_2 %>%
+  filter(!(covariate %in% c(region, colnames(occ_group1))))
+
+plot_gamma_beta(dec_long_2, add_CI = TRUE) +
+  ggtitle("Covariate impact: direct (beta) and indirect (gamma) impact")
+```
+
+
+## Race Decomposition
+
+### Race (Black) - Actual changes in wage
+
+```{r,echo = FALSE}
+
+yu_treatment_control <- yu_treatment_control %>% rename(black=race_black)
+yu_df<- yu_treatment_control %>% filter(treatment==1)
+
+
+yu_df <- dummy_cols(yu_df, select_columns = 'occ1digit')
+
+```
+
+```{r,echo = TRUE }
+outcome<- "log_d_earn"#"log_d_earn"#""
+
+black<- c("black")#,#"log_real_yearly_earnings_1")
+
+# cps <- dummy_cols(cps, select_columns = 'occ1digit')
+occ_group1 <-yu_df %>%
+  select(tidyselect::vars_select(colnames(cps_vars), starts_with('occ1digit_', ignore.case = TRUE)))
+occupation<-colnames(occ_group1)
+occupation<-occupation[occupation!="occ1digit_transport"] 
+
+tasks<-c("task_abstract","task_routine","task_manual" )
+background1<-c("age","race_white","race_asian","edu_num","male")
+
+occexp<- c("experience",tasks)#,occupation)
+            
+
+region<-c("cty_pop2000","cz_pop2000","intersects_msa",
+                    "cs00_seg_inc","cs00_seg_inc_pov25","cs00_seg_inc_aff75",
+                    "cs_race_theil_2000","gini99","poor_share","inc_share_1perc",
+                    "frac_middleclass","rel_tot","cs_frac_black",
+                    "cs_frac_hisp","unemp_rate","pop_d_2000_1980","lf_d_2000_1980",
+                    "cs_labforce","cs_elf_ind_man","cs_born_foreign","mig_inflow",
+                    "mig_outflow","pop_density","frac_traveltime_lt15","hhinc00",
+                    "median_house_value","cs_educ_ba",
+                    "cs_fam_wkidsinglemom","crime_total","subcty_exp_pc",
+                    "taxrate","tax_st_diff_top20")
+
+```
+
+
+```{r,echo = TRUE}
+outcome<- "log_d_earn"
+lm1<- as.formula(
+  paste(outcome,
+        paste(c(black), collapse = " + "),
+        sep = " ~ "))
+model1<-lm(lm1, data = yu_df)
+
+lm2<- as.formula(
+  paste(outcome,
+        paste(c(black,background1), collapse = " + "),
+        sep = " ~ "))
+model2<-lm(lm2, data = yu_df)
+
+lm3<- as.formula(
+  paste(outcome,
+        paste(c(black,background1,occexp), collapse = " + "),
+        sep = " ~ "))
+model3<-lm(lm3, data = yu_df)
+
+lm4<- as.formula(
+  paste(outcome,
+        paste(c(black,background1,occexp,region), collapse = " + "),
+       sep = " ~ "))
+model4<-lm(lm4,  data = yu_df)
+
+lm5<- as.formula(
+  paste(outcome,
+        paste(c(black,background1,occexp,region, "log_real_yearly_earnings_1"), collapse = " + "),
+       sep = " ~ "))
+model5<-lm(lm5,  data = yu_df)
+```
+
+```{r,  echo = TRUE, results = 'asis'}
+
+dec_long_2 <- dec_covar(object = model5, var_main = c("black"), format = "long", add_coefs = TRUE, conf.int = TRUE)
+
+# add occupation group
+ dec_long_2a<-dec_long_2 %>%
+   mutate(group= if_else(covariate %in% c("male"), "male",
+            if_else(covariate %in% c("age", "age2"), "age",
+                         if_else(covariate %in% c("race_white","race_asian"), "race",
+                                if_else(covariate %in% c("experience", "experience2"), "experience",
+                                        if_else(covariate %in% c("log_real_yearly_earnings_1"), "pre-earnings",
+   if_else(covariate %in% occupation, "occupation_group",
+           if_else(covariate %in% tasks, "occupation_tasks",
+           if_else(covariate %in% region, "regional",   
+                         "education")))))))))
+# 
+# 
+sumthose<-  c("beta_K", "beta_K_low", "beta_K_high",
+              "gamma","gamma_low", "gamma_high", "delta")
+
+keepthose<- c("beta_var_base", "beta_var_full")
+
+dec_long_2b <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(sumthose)), funs(sum), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2c <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(keepthose)), funs(max), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2d <-left_join(dec_long_2b,dec_long_2c,by="covariate")
+
+dec_long_2d$variable<-c(rep("black", times=(dim(dec_long_2d)[1])))
+
+plot_dec(dec_long_2d) +
+   ggtitle("Effect of each covariate group on the black coef")
+```
+
+
+### Race (Black) - Counterfactual Predictions
+
+The tutorial took us through the steps of decomposing the change in actual wages. This was accomplished by selecting the subset "treatment=1" in the "yu_treatment_control" dataframe. To do the same analysis for the counterfactual, we select the subset "treatment=0".
+
+```{r, echo=FALSE}
+yu_df_counter <- yu_treatment_control %>% filter(treatment==0)
+yu_df_counter <- dummy_cols(yu_df_counter, select_columns = 'occ1digit')
+```
+
+
+```{r,echo = TRUE}
+outcome<- "log_d_earn"
+lm1<- as.formula(
+  paste(outcome,
+        paste(c(black), collapse = " + "),
+        sep = " ~ "))
+model1<-lm(lm1, data = yu_df_counter)
+
+lm2<- as.formula(
+  paste(outcome,
+        paste(c(black,background1), collapse = " + "),
+        sep = " ~ "))
+model2<-lm(lm2, data = yu_df_counter)
+
+lm3<- as.formula(
+  paste(outcome,
+        paste(c(black,background1,occexp), collapse = " + "),
+        sep = " ~ "))
+model3<-lm(lm3, data = yu_df_counter)
+
+lm4<- as.formula(
+  paste(outcome,
+        paste(c(black,background1,occexp,region), collapse = " + "),
+       sep = " ~ "))
+model4<-lm(lm4,  data = yu_df_counter)
+
+lm5<- as.formula(
+  paste(outcome,
+        paste(c(black,background1,occexp,region, "log_real_yearly_earnings_1"), collapse = " + "),
+       sep = " ~ "))
+model5<-lm(lm5,  data = yu_df_counter)
+```
+
+```{r,  echo = TRUE, results = 'asis'}
+stargazer(model1, model2,model3, model4,model5,
+          title="OLS regression of counterfactual difference in log earnings between t and t+1 for program particpants, consecutively adding more covariates",
+          type = 'html',
+          omit=c(background1,occexp,region,"log_real_yearly_earnings_1"),
+          df = FALSE,
+          add.lines = list(c("Demographics", "No", "Yes", "Yes", "Yes","Yes"),c("Occupation+Experience", "No", "No","Yes","Yes", "Yes"),  c("Local labor market characteristics", "No", "No", "No", "Yes","Yes" ), c("Earnings at t", "No", "No", "No", "No","Yes")),
+          notes.append = FALSE,
+          notes = c("Dependent variable: predicted change in log earnings.","Significance level: * p$<$0.10, ** p$<$0.05, *** p$<$0.01. For further notes, see text." )
+)
+
+```
+
+```{r,  echo = TRUE, results = 'asis'}
+
+dec_long_2 <- dec_covar(object = model5, var_main = c("black"), format = "long", add_coefs = TRUE, conf.int = TRUE)
+
+# add occupation group
+ dec_long_2a<-dec_long_2 %>%
+   mutate(group= if_else(covariate %in% c("male"), "male",
+            if_else(covariate %in% c("age", "age2"), "age",
+                         if_else(covariate %in% c("race_white","race_asian"), "race",
+                                if_else(covariate %in% c("experience", "experience2"), "experience",
+                                        if_else(covariate %in% c("log_real_yearly_earnings_1"), "pre-earnings",
+   if_else(covariate %in% occupation, "occupation_group",
+           if_else(covariate %in% tasks, "occupation_tasks",
+           if_else(covariate %in% region, "regional",   
+                         "education")))))))))
+# 
+# 
+sumthose<-  c("beta_K", "beta_K_low", "beta_K_high",
+              "gamma","gamma_low", "gamma_high", "delta")
+
+keepthose<- c("beta_var_base", "beta_var_full")
+
+dec_long_2b <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(sumthose)), funs(sum), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2c <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(keepthose)), funs(max), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2d <-left_join(dec_long_2b,dec_long_2c,by="covariate")
+
+dec_long_2d$variable<-c(rep("black", times=(dim(dec_long_2d)[1])))
+
+plot_dec(dec_long_2d) +
+   ggtitle("Effect of each covariate group on the black coef")
+```
+
+### Race (Black) - Difference in actual vs counterfactual change in earnings
+
+Finally, to get the difference in actual vs counterfactual earnings, we take a simple difference. This was accomplished in code by reshaping the yu_treatment_control dataframe from long to wide, using the "treatment" variable as the key. Then, the actual column was subtracted by the counterfactual column to produce the change column, which is the outcome variable in the decomposition analysis.
+
+```{r, echo=FALSE}
+yu_df_diff <- tidyr::spread(yu_treatment_control, treatment, log_d_earn)
+names(yu_df_diff)[names(yu_df_diff)=="0"] <- "log_d_earn_counterfactual"
+names(yu_df_diff)[names(yu_df_diff)=="1"] <- "log_d_earn_actual"
+yu_df_diff$log_d_earn_change <- (yu_df_diff$log_d_earn_actual - yu_df_diff$log_d_earn_counterfactual)
+yu_df_diff <- dummy_cols(yu_df_diff, select_columns = 'occ1digit')
+```
+
+```{r,echo = TRUE}
+outcome<- "log_d_earn_change"
+lm1<- as.formula(
+  paste(outcome,
+        paste(c(black), collapse = " + "),
+        sep = " ~ "))
+model1<-lm(lm1, data = yu_df_diff)
+
+lm2<- as.formula(
+  paste(outcome,
+        paste(c(black,background1), collapse = " + "),
+        sep = " ~ "))
+model2<-lm(lm2, data = yu_df_diff)
+
+lm3<- as.formula(
+  paste(outcome,
+        paste(c(black,background1,occexp), collapse = " + "),
+        sep = " ~ "))
+model3<-lm(lm3, data = yu_df_diff)
+
+lm4<- as.formula(
+  paste(outcome,
+        paste(c(black,background1,occexp,region), collapse = " + "),
+       sep = " ~ "))
+model4<-lm(lm4,  data = yu_df_diff)
+
+lm5<- as.formula(
+  paste(outcome,
+        paste(c(black,background1,occexp,region, "log_real_yearly_earnings_1"), collapse = " + "),
+       sep = " ~ "))
+model5<-lm(lm5,  data = yu_df_diff)
+```
+
+```{r,  echo = TRUE, results = 'asis'}
+stargazer(model1, model2,model3, model4,model5,
+          title="OLS regression of counterfactual difference in log earnings between t and t+1 for program particpants, consecutively adding more covariates",
+          type = 'html',
+          omit=c(background1,occexp,region,"log_real_yearly_earnings_1"),
+          df = FALSE,
+          add.lines = list(c("Demographics", "No", "Yes", "Yes", "Yes","Yes"),c("Occupation+Experience", "No", "No","Yes","Yes", "Yes"),  c("Local labor market characteristics", "No", "No", "No", "Yes","Yes" ), c("Earnings at t", "No", "No", "No", "No","Yes")),
+          notes.append = FALSE,
+          notes = c("Dependent variable: predicted change in log earnings.","Significance level: * p$<$0.10, ** p$<$0.05, *** p$<$0.01. For further notes, see text." )
+)
+
+```
+
+```{r,  echo = TRUE, results = 'asis'}
+
+dec_long_2 <- dec_covar(object = model5, var_main = c("black"), format = "long", add_coefs = TRUE, conf.int = TRUE)
+
+# add occupation group
+ dec_long_2a<-dec_long_2 %>%
+   mutate(group= if_else(covariate %in% c("male"), "male",
+            if_else(covariate %in% c("age", "age2"), "age",
+                         if_else(covariate %in% c("race_white","race_asian"), "race",
+                                if_else(covariate %in% c("experience", "experience2"), "experience",
+                                        if_else(covariate %in% c("log_real_yearly_earnings_1"), "pre-earnings",
+   if_else(covariate %in% occupation, "occupation_group",
+           if_else(covariate %in% tasks, "occupation_tasks",
+           if_else(covariate %in% region, "regional",   
+                         "education")))))))))
+# 
+# 
+sumthose<-  c("beta_K", "beta_K_low", "beta_K_high",
+              "gamma","gamma_low", "gamma_high", "delta")
+
+keepthose<- c("beta_var_base", "beta_var_full")
+
+dec_long_2b <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(sumthose)), funs(sum), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2c <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(keepthose)), funs(max), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2d <-left_join(dec_long_2b,dec_long_2c,by="covariate")
+
+dec_long_2d$variable<-c(rep("black", times=(dim(dec_long_2d)[1])))
+
+plot_dec(dec_long_2d) +
+   ggtitle("Effect of each covariate group on the black coef")
+```
+
+
+```{r, echo = TRUE}
+dec_long_2<-dec_long_2 %>%
+  filter(!(covariate %in% c(region, colnames(occ_group1))))
+
+plot_gamma_beta(dec_long_2, add_CI = TRUE) +
+  ggtitle("Covariate impact: direct (beta) and indirect (gamma) impact")
+```
+
+## Age Decomposition
+
+### Age - Actual changes in wage
+
+```{r,echo = FALSE}
+
+yu_treatment_control <- yu_treatment_control %>% rename(age=age)
+yu_df<- yu_treatment_control %>% filter(treatment==1)
+
+
+yu_df <- dummy_cols(yu_df, select_columns = 'occ1digit')
+
+```
+
+```{r,echo = TRUE }
+outcome<- "log_d_earn"#"log_d_earn"#""
+
+age<- c("age")#,#"log_real_yearly_earnings_1")
+
+# cps <- dummy_cols(cps, select_columns = 'occ1digit')
+occ_group1 <-yu_df %>%
+  select(tidyselect::vars_select(colnames(cps_vars), starts_with('occ1digit_', ignore.case = TRUE)))
+occupation<-colnames(occ_group1)
+occupation<-occupation[occupation!="occ1digit_transport"] 
+
+tasks<-c("task_abstract","task_routine","task_manual" )
+background1<-c("black","race_white","race_asian","edu_num","male")
+
+occexp<- c("experience",tasks)#,occupation)
+            
+
+region<-c("cty_pop2000","cz_pop2000","intersects_msa",
+                    "cs00_seg_inc","cs00_seg_inc_pov25","cs00_seg_inc_aff75",
+                    "cs_race_theil_2000","gini99","poor_share","inc_share_1perc",
+                    "frac_middleclass","rel_tot","cs_frac_black",
+                    "cs_frac_hisp","unemp_rate","pop_d_2000_1980","lf_d_2000_1980",
+                    "cs_labforce","cs_elf_ind_man","cs_born_foreign","mig_inflow",
+                    "mig_outflow","pop_density","frac_traveltime_lt15","hhinc00",
+                    "median_house_value","cs_educ_ba",
+                    "cs_fam_wkidsinglemom","crime_total","subcty_exp_pc",
+                    "taxrate","tax_st_diff_top20")
+
+```
+
+
+```{r,echo = TRUE}
+outcome<- "log_d_earn"
+lm1<- as.formula(
+  paste(outcome,
+        paste(c(age), collapse = " + "),
+        sep = " ~ "))
+model1<-lm(lm1, data = yu_df)
+
+lm2<- as.formula(
+  paste(outcome,
+        paste(c(age,background1), collapse = " + "),
+        sep = " ~ "))
+model2<-lm(lm2, data = yu_df)
+
+lm3<- as.formula(
+  paste(outcome,
+        paste(c(age,background1,occexp), collapse = " + "),
+        sep = " ~ "))
+model3<-lm(lm3, data = yu_df)
+
+lm4<- as.formula(
+  paste(outcome,
+        paste(c(age,background1,occexp,region), collapse = " + "),
+       sep = " ~ "))
+model4<-lm(lm4,  data = yu_df)
+
+lm5<- as.formula(
+  paste(outcome,
+        paste(c(age,background1,occexp,region, "log_real_yearly_earnings_1"), collapse = " + "),
+       sep = " ~ "))
+model5<-lm(lm5,  data = yu_df)
+```
+
+```{r,  echo = TRUE, results = 'asis'}
+
+dec_long_2 <- dec_covar(object = model5, var_main = c("age"), format = "long", add_coefs = TRUE, conf.int = TRUE)
+
+# add occupation group
+ dec_long_2a<-dec_long_2 %>%
+   mutate(group= if_else(covariate %in% c("male"), "male",
+                         if_else(covariate %in% c("black","race_white","race_asian"), "race",
+                                if_else(covariate %in% c("experience", "experience2"), "experience",
+                                        if_else(covariate %in% c("log_real_yearly_earnings_1"), "pre-earnings",
+   if_else(covariate %in% occupation, "occupation_group",
+           if_else(covariate %in% tasks, "occupation_tasks",
+           if_else(covariate %in% region, "regional",   
+                         "education"))))))))
+# 
+# 
+sumthose<-  c("beta_K", "beta_K_low", "beta_K_high",
+              "gamma","gamma_low", "gamma_high", "delta")
+
+keepthose<- c("beta_var_base", "beta_var_full")
+
+dec_long_2b <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(sumthose)), funs(sum), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2c <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(keepthose)), funs(max), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2d <-left_join(dec_long_2b,dec_long_2c,by="covariate")
+
+dec_long_2d$variable<-c(rep("age", times=(dim(dec_long_2d)[1])))
+
+plot_dec(dec_long_2d) +
+   ggtitle("Effect of each covariate group on the age coef")
+```
+
+### Age - Counterfactual Predictions
+
+The tutorial took us through the steps of decomposing the change in actual wages. This was accomplished by selecting the subset "treatment=1" in the "yu_treatment_control" dataframe. To do the same analysis for the counterfactual, we select the subset "treatment=0".
+
+```{r, echo=FALSE}
+yu_df_counter <- yu_treatment_control %>% filter(treatment==0)
+yu_df_counter <- dummy_cols(yu_df_counter, select_columns = 'occ1digit')
+```
+
+
+```{r,echo = TRUE}
+outcome<- "log_d_earn"
+lm1<- as.formula(
+  paste(outcome,
+        paste(c(age), collapse = " + "),
+        sep = " ~ "))
+model1<-lm(lm1, data = yu_df_counter)
+
+lm2<- as.formula(
+  paste(outcome,
+        paste(c(age,background1), collapse = " + "),
+        sep = " ~ "))
+model2<-lm(lm2, data = yu_df_counter)
+
+lm3<- as.formula(
+  paste(outcome,
+        paste(c(age,background1,occexp), collapse = " + "),
+        sep = " ~ "))
+model3<-lm(lm3, data = yu_df_counter)
+
+lm4<- as.formula(
+  paste(outcome,
+        paste(c(age,background1,occexp,region), collapse = " + "),
+       sep = " ~ "))
+model4<-lm(lm4,  data = yu_df_counter)
+
+lm5<- as.formula(
+  paste(outcome,
+        paste(c(age,background1,occexp,region, "log_real_yearly_earnings_1"), collapse = " + "),
+       sep = " ~ "))
+model5<-lm(lm5,  data = yu_df_counter)
+```
+
+```{r,  echo = TRUE, results = 'asis'}
+stargazer(model1, model2,model3, model4,model5,
+          title="OLS regression of counterfactual difference in log earnings between t and t+1 for program particpants, consecutively adding more covariates",
+          type = 'html',
+          omit=c(background1,occexp,region,"log_real_yearly_earnings_1"),
+          df = FALSE,
+          add.lines = list(c("Demographics", "No", "Yes", "Yes", "Yes","Yes"),c("Occupation+Experience", "No", "No","Yes","Yes", "Yes"),  c("Local labor market characteristics", "No", "No", "No", "Yes","Yes" ), c("Earnings at t", "No", "No", "No", "No","Yes")),
+          notes.append = FALSE,
+          notes = c("Dependent variable: predicted change in log earnings.","Significance level: * p$<$0.10, ** p$<$0.05, *** p$<$0.01. For further notes, see text." )
+)
+
+```
+
+```{r,  echo = TRUE, results = 'asis'}
+
+dec_long_2 <- dec_covar(object = model5, var_main = c("age"), format = "long", add_coefs = TRUE, conf.int = TRUE)
+
+# add occupation group
+ dec_long_2a<-dec_long_2 %>%
+   mutate(group= if_else(covariate %in% c("male"), "male",
+                         if_else(covariate %in% c("black","race_white","race_asian"), "race",
+                                if_else(covariate %in% c("experience", "experience2"), "experience",
+                                        if_else(covariate %in% c("log_real_yearly_earnings_1"), "pre-earnings",
+   if_else(covariate %in% occupation, "occupation_group",
+           if_else(covariate %in% tasks, "occupation_tasks",
+           if_else(covariate %in% region, "regional",   
+                         "education"))))))))
+# 
+# 
+sumthose<-  c("beta_K", "beta_K_low", "beta_K_high",
+              "gamma","gamma_low", "gamma_high", "delta")
+
+keepthose<- c("beta_var_base", "beta_var_full")
+
+dec_long_2b <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(sumthose)), funs(sum), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2c <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(keepthose)), funs(max), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2d <-left_join(dec_long_2b,dec_long_2c,by="covariate")
+
+dec_long_2d$variable<-c(rep("age", times=(dim(dec_long_2d)[1])))
+
+plot_dec(dec_long_2d) +
+   ggtitle("Effect of each covariate group on the age coef")
+```
+
+### Age - Difference in actual vs counterfactual change in earnings
+
+Finally, to get the difference in actual vs counterfactual earnings, we take a simple difference. This was accomplished in code by reshaping the yu_treatment_control dataframe from long to wide, using the "treatment" variable as the key. Then, the actual column was subtracted by the counterfactual column to produce the change column, which is the outcome variable in the decomposition analysis.
+
+```{r, echo=FALSE}
+yu_df_diff <- tidyr::spread(yu_treatment_control, treatment, log_d_earn)
+names(yu_df_diff)[names(yu_df_diff)=="0"] <- "log_d_earn_counterfactual"
+names(yu_df_diff)[names(yu_df_diff)=="1"] <- "log_d_earn_actual"
+yu_df_diff$log_d_earn_change <- (yu_df_diff$log_d_earn_actual - yu_df_diff$log_d_earn_counterfactual)
+yu_df_diff <- dummy_cols(yu_df_diff, select_columns = 'occ1digit')
+```
+
+```{r,echo = TRUE}
+outcome<- "log_d_earn_change"
+lm1<- as.formula(
+  paste(outcome,
+        paste(c(age), collapse = " + "),
+        sep = " ~ "))
+model1<-lm(lm1, data = yu_df_diff)
+
+lm2<- as.formula(
+  paste(outcome,
+        paste(c(age,background1), collapse = " + "),
+        sep = " ~ "))
+model2<-lm(lm2, data = yu_df_diff)
+
+lm3<- as.formula(
+  paste(outcome,
+        paste(c(age,background1,occexp), collapse = " + "),
+        sep = " ~ "))
+model3<-lm(lm3, data = yu_df_diff)
+
+lm4<- as.formula(
+  paste(outcome,
+        paste(c(age,background1,occexp,region), collapse = " + "),
+       sep = " ~ "))
+model4<-lm(lm4,  data = yu_df_diff)
+
+lm5<- as.formula(
+  paste(outcome,
+        paste(c(age,background1,occexp,region, "log_real_yearly_earnings_1"), collapse = " + "),
+       sep = " ~ "))
+model5<-lm(lm5,  data = yu_df_diff)
+```
+
+```{r,  echo = TRUE, results = 'asis'}
+stargazer(model1, model2,model3, model4,model5,
+          title="OLS regression of counterfactual difference in log earnings between t and t+1 for program particpants, consecutively adding more covariates",
+          type = 'html',
+          omit=c(background1,occexp,region,"log_real_yearly_earnings_1"),
+          df = FALSE,
+          add.lines = list(c("Demographics", "No", "Yes", "Yes", "Yes","Yes"),c("Occupation+Experience", "No", "No","Yes","Yes", "Yes"),  c("Local labor market characteristics", "No", "No", "No", "Yes","Yes" ), c("Earnings at t", "No", "No", "No", "No","Yes")),
+          notes.append = FALSE,
+          notes = c("Dependent variable: predicted change in log earnings.","Significance level: * p$<$0.10, ** p$<$0.05, *** p$<$0.01. For further notes, see text." )
+)
+
+```
+
+```{r,  echo = TRUE, results = 'asis'}
+
+dec_long_2 <- dec_covar(object = model5, var_main = c("age"), format = "long", add_coefs = TRUE, conf.int = TRUE)
+
+# add occupation group
+ dec_long_2a<-dec_long_2 %>%
+   mutate(group= ifelse(covariate %in% c("male"), "male",
+                         if_else(covariate %in% c("black","race_white","race_asian"), "race",
+                                if_else(covariate %in% c("experience", "experience2"), "experience",
+                                        if_else(covariate %in% c("log_real_yearly_earnings_1"), "pre-earnings",
+   if_else(covariate %in% occupation, "occupation_group",
+           if_else(covariate %in% tasks, "occupation_tasks",
+           if_else(covariate %in% region, "regional",   
+                         "education"))))))))
+# 
+# 
+sumthose<-  c("beta_K", "beta_K_low", "beta_K_high",
+              "gamma","gamma_low", "gamma_high", "delta")
+
+keepthose<- c("beta_var_base", "beta_var_full")
+
+dec_long_2b <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(sumthose)), funs(sum), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2c <- dec_long_2a %>%
+  group_by(group)%>%
+  summarise_at(vars(all_of(keepthose)), funs(max), na.rm=TRUE)%>%
+  rename(covariate=group)
+
+dec_long_2d <-left_join(dec_long_2b,dec_long_2c,by="covariate")
+
+dec_long_2d$variable<-c(rep("age", times=(dim(dec_long_2d)[1])))
+
+plot_dec(dec_long_2d) +
+   ggtitle("Effect of each covariate group on the age coef")
+```
+
+```{r, echo = TRUE}
+dec_long_2<-dec_long_2 %>%
+  filter(!(covariate %in% c(region, colnames(occ_group1))))
+
+plot_gamma_beta(dec_long_2, add_CI = TRUE) +
+  ggtitle("Covariate impact: direct (beta) and indirect (gamma) impact")
+```
+
+
+# Additional Analyses
+
+## Heterogeneity by Race and Gender
+
+In this section, we explore the dynamics between race and gender. Since both variables are binary, this amounts to comparing the treatment effects between four groups. Of the 1132 individuals, we have 250 Black men, 209 Black women, 379 non-Black men, and 294 non-Black women.
+
+```{r interacted_treat_effect_race}
+yu_df <- yu_treatment_control
+
+ate<-lm(log_d_earn~treatment + sex*treatment+sex, data = subset(yu_df, race_black==1))
+beta1 <- summary(ate)$coefficients[2,1]
+beta2 <- summary(ate)$coefficients[3,1]
+beta3 <- summary(ate)$coefficients[4,1]
+
+black_female <- exp(beta1)-1
+black_male <- exp(beta1+beta3)-1
+
+ate<-lm(log_d_earn~treatment + sex*treatment+sex, data = subset(yu_df, race_black==0))
+beta1 <- summary(ate)$coefficients[2,1]
+beta2 <- summary(ate)$coefficients[3,1]
+beta3 <- summary(ate)$coefficients[4,1]
+
+nonblack_female <- exp(beta1)-1
+nonblack_male <- exp(beta1+beta3)-1
+
+paste0("YU treatment effect for Black females: ", round(black_female, n_digits)*100, "%")
+paste0("YU treatment effect for Black males: ", round(black_male, n_digits)*100, "%")
+paste0("YU treatment effect for non-Black females: ", round(nonblack_female, n_digits)*100, "%")
+paste0("YU treatment effect for non-Black males: ", round(nonblack_male, n_digits)*100, "%")
+paste0("---------------------------------------")
+paste0("YU treatment effect on growth rate for Black females is ", 
+       round(black_female-black_male, n_digits)*100, " percentage points higher than for Black males ")
+
+paste0("YU treatment effect on growth rate for non-Black females is ", 
+       round(nonblack_female-nonblack_male, n_digits)*100, " percentage points higher than for non-Black males ")
+
+paste0("YU treatment effect on growth rate for non-Black males is ", 
+       round(nonblack_male-black_male, n_digits)*100, " percentage points higher than for Black males ")
+
+paste0("YU treatment effect on growth rate for non-Black females is ", 
+       round(nonblack_female-black_female, n_digits)*100, " percentage points higher than for Black females ")
+
+
+paste0("Full Interactions Model")
+ate<-lm(log_d_earn~treatment + sex + race_black + sex*race_black + 
+          sex*treatment + race_black*treatment + sex*race_black*treatment, 
+        data = yu_df)
+summary(ate)
+
+beta1 <- summary(ate)$coefficients[2,1]
+beta2 <- summary(ate)$coefficients[3,1]
+beta3 <- summary(ate)$coefficients[4,1]
+beta4 <- summary(ate)$coefficients[5,1]
+beta5 <- summary(ate)$coefficients[6,1]
+beta6 <- summary(ate)$coefficients[7,1]
+beta7 <- summary(ate)$coefficients[8,1]
+```
+
+We see that the group with the lowest treatment effect is indeed Black males, consistent with the result that Black people and males see lower treatment effects. However, it is interesting to note that the coefficient of the full interaction term is positive, though only significant at the 10% level. This reflects the fact that the racial gap in treatment effects is much larger for women than for men. The treatment effect gap in real earnings growth between non-Black women and Black women is 18.09 percentage points while the gap between non-Black men and Black men is only 4.17 percentage points. An alternative interpretation is that the gender gap in treatment effects is much larger for non-Black people than for Black people. The treatment effect gap between non-Black women and men is 25.69 percentage points while the gap between Black women and men is 11.77 percentage points.
+
+
+
+
+
+
+
+
