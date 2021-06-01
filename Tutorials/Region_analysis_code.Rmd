@@ -496,6 +496,8 @@ categorical<-c("year","region_large")
 cps_df_log[ , categorical] <- lapply(cps_df_log[ ,categorical] , factor)
 
 # Store the relevant CPS data (including log wage change) for building the wage prediction model
+
+# [REGIONAL ANALYSIS ADJUSTMENT] Add cz_name to the list of variables to look at 
 vars<- cps_df_log %>%
   select(log_real_yearly_earnings_1, year,
          age,age2,sex,race_white,race_black,race_asian,
@@ -509,7 +511,7 @@ vars<- cps_df_log %>%
          mig_outflow,pop_density,frac_traveltime_lt15,hhinc00,
          median_house_value,,cs_educ_ba,
          cs_fam_wkidsinglemom,crime_total,subcty_exp_pc,
-         taxrate,tax_st_diff_top20)
+         taxrate,tax_st_diff_top20, cz_name)
 saveRDS(vars, file = paste(save_folder, "vars_region.rds", sep="/"))
 
 # Store the names of the variables used in the wage prediction model as they will come handy when adding new ones
@@ -553,6 +555,7 @@ cps_df_log_test_unscaled <- cps_df_log_test
 #saveRDS(cps_df_log_test_unscaled, file = "cps_df_log_test_unscaled.rds")
 
 # Select continuous variables to be scaled
+
 # [REGIONAL ANALYSIS ADJUSTMENT] Here, we add city (cz_name) as another variable to consider.
 cont<-vars %>%select(-c(year, 
                         region_large, sex, race_white,race_black,
@@ -708,7 +711,7 @@ eval_results_test(y_test, cps_df_log_test$ridge_predictions_test, cps_df_log_tes
 
 ```
 
-As we can observe from the $R^2$ and RMSE metrics above, the ridge model performs well on both the training and test sets, which could be explained by the regularization imposed on the coefficients of the regression that makes the model more robust and prevents it from over-fitting. The standard errors and confidence interval around the MSE on the test set tells us how noisy our MSE estimate is, given the sampling variation on the test set. Ideally we would like to get a measure of the MSE on an infinitely large test set. In the absence of that, we include this confidence interval to account for the fact that there is sampling variation. With MSE equal to 0.351, the confidence interval CI_MSE_high and CI_MSE_low tells us that the true estimation of the MSE lies somewhere between 0.363 and 0.340 with 95% confidence.
+As we can observe from the $R^2$ and RMSE metrics above, the ridge model performs well on both the training and test sets, which could be explained by the regularization imposed on the coefficients of the regression that makes the model more robust and prevents it from over-fitting. The standard errors and confidence interval around the MSE on the test set tells us how noisy our MSE estimate is, given the sampling variation on the test set. Ideally we would like to get a measure of the MSE on an infinitely large test set. In the absence of that, we include this confidence interval to account for the fact that there is sampling variation. With MSE equal to 0.371, the confidence interval CI_MSE_high and CI_MSE_low tells us that the true estimation of the MSE lies somewhere between 0.392 and 0.351 with 95% confidence.
 
 ## Calibration Analysis for Wage Prediction Models 
 We now show the results of the calibration analysis of the predictions obtained from ridge regression model. Calibration analysis involves comparing the actual output and the expected output given by a model. 
@@ -886,9 +889,12 @@ Again, the over- and under-predictions we observe for the ridge model are not la
 summary(lm(log_d_earn~ ridge_predictions_test, data=subset(cps_df_log_test, region_large_unscaled==1))) 
 ```
 
+
 ```{r ridge_calib_region2}
+# [REGIONAL ANALYSIS ADJUSTMENT] It is likely that the cities YU operates do not fit with the region_large = 2
+
 # Run a calibration regression for observations with region==2 to obtain the slope of the regression model line plotted
-summary(lm(log_d_earn~ ridge_predictions_test, data=subset(cps_df_log_test, region_large_unscaled==2))) 
+ summary(lm(log_d_earn~ ridge_predictions_test, data=subset(cps_df_log_test, region_large_unscaled==2))) 
 ```
 
 ```{r ridge_calib_region3}
@@ -924,6 +930,7 @@ cps_df_log_test_grouped <- cps_df_log_test %>%
 ```
 
 ```{r ridgecalibration_ntiles_region2}
+# [REGIONAL ANALYSIS ADJUSTMENT] It is likely that the cities YU operates do not fit with the region_large = 2
 
 num_tiles <- 10 
 cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$ridge_predictions_test, n=num_tiles))
@@ -1189,6 +1196,10 @@ colnames(yu_df)<-c("PACE_ID","log_d_earn","log_earnings.2_post", "log_earnings.1
                    "cs_educ_ba","cs_fam_wkidsinglemom","crime_total",
                    "subcty_exp_pc","taxrate","tax_st_diff_top20", "region_large")
 
+
+#[REGIONAL ANALYSIS ADJUSTMENT] This adjustment is to make sure that R does not have a problem dealing with spaces.
+yu_df$cz_name<-str_replace_all(yu_df$cz_name, " ", ".")
+
 ```
 
 ### Summary Statistics
@@ -1285,8 +1296,8 @@ occupation_summary <- yu_df %>%
             gini=mean(gini99)) %>%
   arrange(-count_yu)
 
-write_csv(region_summary, "region_summary.csv")
-write_csv(occupation_summary, "occupation_summary.csv")
+write_csv(region_summary, "region_summary_region.csv")
+write_csv(occupation_summary, "occupation_summary_region.csv")
 
 occupation_region <- yu_df %>%
   group_by(occ1digit,cz_name) %>%
@@ -1294,7 +1305,7 @@ occupation_region <- yu_df %>%
             yu_median_previous_earnings=median(real_yearly_earnings.1_pre),
             yu_log_d_earn_median=median(log_d_earn))
 
-write_csv(occupation_region, "occupation_region.csv")
+write_csv(occupation_region, "occupation_region_region.csv")
 ```
 
 ```{r summary_stats_table_2, message=FALSE, echo = TRUE}
@@ -1414,7 +1425,9 @@ yu_df = yu_df[, !("occ2010")] # dont need this variable
 
 # Convert variables that are not yet into factors 
 class(yu_df)<-class(as.data.frame(yu_df))
-categorical<-c("year", "region_large")
+
+# [REGIONAL ANALYSIS ADJUSTMENT] Here, we add city name (cz_name) as a variable to consider as a categorical dummy variable.
+categorical<-c("year", "region_large", "cz_name")
 yu_df[ ,categorical] <- lapply(yu_df[ , categorical] , factor)
 
 ```
@@ -1422,9 +1435,11 @@ yu_df[ ,categorical] <- lapply(yu_df[ , categorical] , factor)
 ```{r load_cps}
 
 # Load the CPS variables from memory
-vars <- readRDS(paste(save_folder, "vars.rds", sep="/"))
+vars <- readRDS(paste(save_folder, "vars_region.rds", sep="/"))
+
+# [REGIONAL ANALYSIS ADJUSTMENT] Here, I added cz_name as another factor to consider in vars
 cont <- vars %>% dplyr::select(-c(year, region_large, sex, race_white, 
-                                race_black, race_asian)) # picking continous variables by exclduing the few categorical variables
+                                race_black, race_asian, cz_name)) # picking continous variables by exclduing the few categorical variables
 
 # Select the variables from the YU data that match the ones from the CPS data
 cont<-c(colnames(cont))
@@ -1432,7 +1447,7 @@ class(yu_df)<-class(as.data.frame(yu_df))
 
 # Load the preprocessed CPS data from memory because we preprocess the YU data
 # using the CPS training data preprocessing parameters
-pre_proc_val <- readRDS(paste(save_folder, "pre_proc_val.rds", sep="/"))
+pre_proc_val <- readRDS(paste(save_folder, "pre_proc_val_region.rds", sep="/"))
 yu_df[,cont] = predict(pre_proc_val, yu_df[,cont])
 
 ```
@@ -1453,7 +1468,7 @@ yu_df_dummies <- as.data.frame(yu_df_dummies)
 yu_df_dummies <-yu_df_dummies %>% mutate(year.2006=0)
 
 # Make sure columns are in same order across the CPS and YU datasets
-cols <- readRDS(paste(save_folder, "cols.rds", sep="/"))
+cols <- readRDS(paste(save_folder, "cols_region.rds", sep="/"))
 yu_df_dummies <-yu_df_dummies %>% select(cols)
 
 ```
@@ -1468,7 +1483,7 @@ We summarize the predicted values.
 ```{r ridge_yu_preds}
 
 # Load the ridge regression model & optimal lambda from memory
-load(paste(save_folder, "ridge_reg_cps.rda", sep="/"))
+load(paste(save_folder, "ridge_reg_cps_region.rda", sep="/"))
 
 # Use ridge optimal lambda obtained from the model building tutorial
 optimal_lambda <- 0.001
@@ -1501,7 +1516,7 @@ control$log_d_earn <- predict(ridge_reg_cps, s = optimal_lambda, newx = yu_df_xd
 
 # Combine the treatment and control groups into one dataframe
 both<-as.data.frame(rbind(control,treatment))
-saveRDS(both, file = paste(save_folder, "yu_treatment_control.rds", sep="/") )
+saveRDS(both, file = paste(save_folder, "yu_treatment_control_region.rds", sep="/") )
 
 # Regress the difference in log yearly earnings on the treatment group 
 ate<-lm(log_d_earn~treatment, data=both)
@@ -1513,1586 +1528,121 @@ exp(summary(ate)$coefficients[2,1])
 
 ```
 
-The regression table shows that the difference in log earnings between t and t+1 is 0.470 for Year Up participants as compared to their counterfactual outcomes. We can convert this coefficient into the log odds ratio by taking the expectation, since our outcome is log(a)-log(b)=log(a/b) and get 1.60.
+The regression table shows that the difference in log earnings between t and t+1 is 0.465 for Year Up participants as compared to their counterfactual outcomes. We can convert this coefficient into the log odds ratio by taking the expectation, since our outcome is log(a)-log(b)=log(a/b) and get 1.59.
 Thus, there is a positive treatment effect of ~60% from the YU training program, i.e. the real yearly earnings of YU participants experience a 60% increase due to this training program, compared to what they otherwise would have got. 
 
 ## Estimating Heterogeneous Treatment Effects for Subgroups 
 Remember that we are ultimately interested in whether certain subgroups in Year Up participants do better than others. We run one such subgroup analysis here here as an example, and then it will be up to you to investigate other potentially interesting subgroups. 
 
-### Treatment Effects by Gender
+# [REGIONAL ANALYSIS ADJUSTMENT] Interaction analysis for cities
+In this portion, we will look at the performance of each city, particularly how the counterfactual performed relative to each other. We will show both the heterogenous treatment effects as well as the net effects to see if there is a relationship between overall effect.
 
-There are two ways in which we can estimate treatment effects for different subgroups. The first version is to simply split the samples by gender and estimate their respective treatment effects. The second version is to estimate an interaction model, where we interact the treatment indicator with the gender variable. 
+We are using cities as a proxy for the "regional" variable because looking at different cities are the most practical for Year-Up to look at.
 
-Let's start with the first version: 
+```{r treat_effect_model_city}
+city_performance <- c("city_name", "counterfactual", "treatment", "treatment_effect")
+city_heterogenity <- data.frame(cz_name = character(), treatment_effect = double())
+  
+for (city_name in cities) {
+  city_effect <-lm(log_d_earn~treatment, data=subset(both, cz_name == city_name))
+  city_effect_summary <- exp(summary(city_effect)$coefficients[2,1])
+  city_heterogenity <- rbind(city_heterogenity, c(city_name, city_effect_summary))
+}
+colnames(city_heterogenity) <- c("cz_name", "annual_earning_increase")
 
-#### Estimating the Treatment Effect for Male participants
+#Keep only Atlanta, Boston, NY, SF, Seattle, DC
+cities_shown = c("Atlanta", "Boston", "New.York.City", "San.Francisco", "Seattle", "Washington.DC")
 
-```{r male_treat_effect}
+city_heterogenity <- city_heterogenity %>%
+  filter(cz_name %in% cities_shown) %>%
+  mutate(
+    annual_earning_increase = as.double(annual_earning_increase) - 1
+  )
+  
+ggplot(data = city_heterogenity) +
+  geom_bar(mapping = aes(x=reorder(cz_name, -annual_earning_increase), y=annual_earning_increase), stat="identity") +
+  theme(axis.text.x = element_text(angle = 45)) +
+  xlab("City") +
+  ylab("% Increase in Log Annual Earnings, 1 Year") +
+  ggtitle("Difference in Treatment Effect by City") +
+  theme(axis.text.x = element_text(vjust= 0.7))
 
-ate<-lm(log_d_earn~treatment, data=subset(both,sex==1))
-
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
 
 ```
 
-So it looks like men have a treatment effect of 52% increase in earnings thanks to Year Up. 
+```{r city_effect_subsetting}
+city_performance <- both %>%
+  group_by(cz_name, treatment) %>%
+  summarise(performance = median(log_d_earn)) %>%
+  mutate(
+    treatment = as.factor(treatment)
+  )
+
+city_performance <- city_performance %>%
+  mutate(
+    treatment = ifelse(treatment == 1, "YU partcipant", "Non participant")
+  )
+colnames(city_performance) <- c("cz_name", "Participation", "performance")
 
 
-#### Estimating the Treatment Effect for Female participants
-```{r female_treat_effect}
+ggplot(data = city_performance) +
+  geom_bar(mapping = aes(x=cz_name, y=performance, fill=Participation), stat="identity", position = "dodge") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.7)) + 
+  xlab("City") + 
+  ylab("Median expected log returns") +
+  ggtitle("Median expected log returns per city")
 
-ate<-lm(log_d_earn~treatment, data=subset(both,sex==0))
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-
-```
-Women on the other hand have an average increase of  71% in year over year earnings thanks to Year Up - that is quite a bit higher!
-
-#### Estimating an Interaction Model
-With such a large difference, it is likely that the difference in treatment effects for men and women is statistically significant. The way to formally test this is to compute confidence intervals (estimate +/- 1.96*standard errorr) around the treatment point-estimates from the standard errors in both regressions, and see whether the confidence intervals overlap. If they do not, then the difference is statistically significant. However, there is also a more direct way to see whether the difference is statistically significant - we can run a joint regression of the whole sample, and interact the treatment effect with gender.  
-
-Because of the way our two samples of treatment and control are designed in our case, (i.e. "treatment" and "control" are the same individuals, just with different outcomes - actual and counterfactual) those two approaches will give the same results. This is because the averages in covarariates across the two samples are the same. In the overall average treatment effect regression, this means you can add all the controls you want, and the treatment effect would not change. 
-
-If covariates were not the same on average across treatment and control groups, for the subgroup and the interaction effect results to be the same, one would have to interact all included variables with the gender variable.  Here the two approaches are identical. The main advantage of the interaction model is that we can see directly whether the difference in treatment effects is statistically significant. 
-
-```{r interacted_treat_effect}
-
-ate<-lm(log_d_earn~treatment + sex*treatment+sex, data = both)
-
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-exp(summary(ate)$coefficients[3,1])
-exp(summary(ate)$coefficients[4,1])
 
 ```
 
-
-First, we see that the treatment effect coefficient is the same as in our female only model. That is exactly right: the treatment effect coefficient is the effect of treatment when the interaction term is 0, which is the case when sex==0, i.e. for women. Next, we see that the treatment:sex interaction is negative and significant! Taking the treatment effect coefficient and subtracting the interaction term, we get 0.53794-0.12140=0.41654, which is exactly the male only coefficient from the separate model. Hence, we have recovered the same numbers and know that their difference is statistically significant!
-
-It looks like women have a lot larger returns than men from Year Up!  Why might that be and what is driving that? This is what we will try to uncover in the third tutorial. 
-
-### Treatment Effects by Region
-
-The previous tutorial stated that since some machine learning algorithms do poorly with many dummies, categorical variables like location were expressed as continuous variables that describe the characteristics of the location. This poses a hurdle to exploring heterogeneity by location. In order to explore the location dimension, we will try a few proxies for location, such as population and poverty rate. Unfortunately, this analysis produces coefficients that are hard to interpret. More work is needed to understand which is the proper proxy for location. In the future, we may also try to merge the location dummies back into the data for use in this step (perhaps try region_large?).
-
-```{r location_effect}
-ate<-lm(log_d_earn~treatment + cty_pop2000 + cty_pop2000*treatment, data = both)
+Here, we can analyze the extent that cities affect the performance of YU graduates through an interaction model.
+```{r city_heterogeity}
+ate<-lm(log_d_earn~treatment + cz_name + cz_name*treatment, data = both)
 
 summary(ate)
 
 paste0("Coefficient on Treatment")
 exp(summary(ate)$coefficients[2,1])
-paste0("Coefficient on County Population in 2000")
-exp(summary(ate)$coefficients[3,1])
-paste0("Coefficient on Interaction")
-exp(summary(ate)$coefficients[4,1])
-
-ate<-lm(log_d_earn~treatment + poor_share + poor_share*treatment, data = both)
-
-summary(ate)
-
-paste0("Coefficient on Treatment")
-exp(summary(ate)$coefficients[2,1])
-paste0("Coefficient on Poverty Rate")
+paste0("Coefficient on City")
 exp(summary(ate)$coefficients[3,1])
 paste0("Coefficient on Interaction")
 exp(summary(ate)$coefficients[4,1])
 
 ```
 
-Here, we explore heterogeneity by occupation. Similar to location, the occupation dummies are expressed as continuous variables. Once again, we use proxies for occupation - measures of how abstract and how manual the tasks in the occupation are. In general, more abstract tasks require a higher education level to accomplish. When we regress earnings using the measure of abstractness, we see that the coeffficient on the treatment and the measure of abstractness are both positive and significant, as we expect them to be. A Year Up applicant coming from a previous occupation that requires more abstract tasks will earn more on average. However, the coefficient on the interaction term is negative and significant. This implies that YearUp is less effective for applicants that come from occupations with more abstract tasks. A possible interpretation for this fact is that these "smarter" applicants would have been able to find lucrative jobs even without going through the program, so the value added of YearUp is low. 
+Here, we see the interaction with the following factors that might be confounding: Previous earnings, race, gender, age, task_abstract
 
-We try the same analysis using the measure for how manual the tasks in an occupation are. We assume that occupations with a higher manual score requires less education, so we expect individuals coming from these jobs to benefit significantly from the program. In regression terms, this would translate to a positive interaction term. Running the regression, we find that the interaction term is negative, but not significant. More research is needed to understand these measures, and why the coefficient on the manual measure interaction term is not in the expected direction. Additionally, we hope to find a more systematic way to explore heterogeneity, in order to avoid issues with cherry picking.
+```{r city_heterogeity_all_factors}
+ate<-lm(log_d_earn~treatment + cz_name + sex + race_black + age + real_yearly_earnings.1_pre + task_abstract + cz_name*treatment + cz_name*sex + cz_name*race_black + cz_name*age + cz_name*task_abstract + cz_name*real_yearly_earnings.1_pre, data = both)
 
-```{r occupation_effect}
-ate<-lm(log_d_earn~treatment + task_abstract + task_abstract*treatment, data = both)
+summary(ate)
+
+View(summary(ate)$coefficients)
+
+paste0("Coefficient on Treatment")
+exp(summary(ate)$coefficients[2,1])
+
+```
+
+Here it is important to note that including cities as a proxy for region decreased the treatment effect from 59% to 52%, which is notable, even though the analysis above cannot confirm that it is statistically significant. It is important to note that not all cities are have a statistically significant relationship with treatment. If we filter for cities with >100 participants, significant interaction with the "treatment" variable (>90% CI), and a lack of significant interaction with other terms, we see that only Washington DC and Seattle remain. These cities are the most promising for further analysis.
+
+Our analysis is not conclusive, but it does show that region/geographic considerations are worth pursuing further. To make a more robust analysis, more data points per city are needed; this can be used to further confirm the insights derived and allow observations on cities to become more significant.
+
+```{r city_heterogeity_gender_race_all}
+ate<-lm(log_d_earn~treatment + cz_name + sex + race_black + age + real_yearly_earnings.1_pre + task_abstract + cz_name*treatment + cz_name*sex + cz_name*race_black + cz_name*age + cz_name*task_abstract + cz_name*real_yearly_earnings.1_pre + treatment*sex + treatment*race_black, data = both)
 
 summary(ate)
 
 paste0("Coefficient on Treatment")
 exp(summary(ate)$coefficients[2,1])
-paste0("Coefficient on Abstract Task Measure")
-exp(summary(ate)$coefficients[3,1])
-paste0("Coefficient on Interaction")
-exp(summary(ate)$coefficients[4,1])
 
-ate<-lm(log_d_earn~treatment + task_manual + task_manual*treatment, data = both)
+```
+
+In the analysis above, it is important to note that even when taking into consideration geographic considerations (with cities as a proxy), the race and gender variables previously looked at are still significant: geographic differences does not seem to take this into account.
+
+```{r city_heterogeity_all_factors}
+ate<-lm(log_d_earn~treatment + cz_name + sex + cz_name*treatment + cz_name*sex, data = both)
 
 summary(ate)
-
-paste0("Coefficient on Treatment")
-exp(summary(ate)$coefficients[2,1])
-paste0("Coefficient on Manual Task Measure")
-exp(summary(ate)$coefficients[3,1])
-paste0("Coefficient on Interaction")
-exp(summary(ate)$coefficients[4,1])
-
 ```
-
-### Treatment Effects by Race
-
-#### Count
-race_white =  46
-race_asian  = 103
-race_black =  459
-race_other/not listed = 1083 - 46 - 103 - 459 = 475
-
-
-```{r race_effect}
-#White
-
-ate<-lm(log_d_earn~treatment, data=subset(both,race_white==1))
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-
-#Asian
-
-ate<-lm(log_d_earn~treatment, data=subset(both,race_asian==1))
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-
-#Black
-
-ate<-lm(log_d_earn~treatment, data=subset(both,race_black==1))
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-
-#Non-Black
-ate<-lm(log_d_earn~treatment, data=subset(both,race_black==0))
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-
-#Interaction Terms
-
-#White
-
-ate<-lm(log_d_earn~treatment + race_white*treatment+race_white, data = both)
-
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-exp(summary(ate)$coefficients[3,1])
-exp(summary(ate)$coefficients[4,1])
-
-#Asian
-
-ate<-lm(log_d_earn~treatment + race_asian*treatment+race_asian, data = both)
-
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-exp(summary(ate)$coefficients[3,1])
-exp(summary(ate)$coefficients[4,1])
-
-#Black
-
-ate<-lm(log_d_earn~treatment + race_black*treatment+race_black, data = both)
-
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-exp(summary(ate)$coefficients[3,1])
-exp(summary(ate)$coefficients[4,1])
-
-```
-
-### Treatment Effects by Age
-
-median(treatment$age) = -1.634626 = Age 19
-mean(treatment$age) = -1.63576 = Age 19
-
-#### Count
-table(treatment$age < -1.634626) = 730
-table(treatment$age > -1.634626)  = 402
-
-```{r age_effect}
-
-# Age of < -1.6 should be close to median of 19 years of age or less
-ate<-lm(log_d_earn~treatment, data=subset(both, age < -1.634626))
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-
-# Age of > -1.6 should be close to median of 19 years of age or more 
-ate<-lm(log_d_earn~treatment, data=subset(both, age > -1.634626))
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-
-#Interaction Terms
-
-ate<-lm(log_d_earn~treatment + age*treatment+age, data = both)
-
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-exp(summary(ate)$coefficients[3,1])
-exp(summary(ate)$coefficients[4,1])
-
-```
-
-### Treatment Effects by Years of Education
-
-#### Count
-12 years of education = 764
-14 years of education = 368
-
-```{r education_effect}
-
-#12 years of education
-ate<-lm(log_d_earn~treatment, data=subset(both,edu_num < 0))
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-
-#14 years of education
-ate<-lm(log_d_earn~treatment, data=subset(both,edu_num > 0))
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-
-#Interaction Terms
-ate<-lm(log_d_earn~treatment + edu_num*treatment+edu_num, data = both)
-
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-exp(summary(ate)$coefficients[3,1])
-exp(summary(ate)$coefficients[4,1])
-```
-### Treatment Effects by Years of Experiences
-
-#### Count
-3+ years of experience = 612
-<3 years of experience = 520
-
-```{r experience_effect}
-
-# > or = 3 years of experience 
-ate<-lm(log_d_earn~treatment, data=subset(both,experience > -1.38456474221906))
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-
-# < 3 years of experience 
-ate<-lm(log_d_earn~treatment, data=subset(both,experience < -1.38456474221906))
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-
-#Interaction Terms
-ate<-lm(log_d_earn~treatment + experience*treatment+experience, data = both)
-
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-exp(summary(ate)$coefficients[3,1])
-exp(summary(ate)$coefficients[4,1])
-
-```
-
-```{r cohort_effect}
-
-#Interaction Terms
-ate<-lm(log_d_earn~treatment + Cohort*treatment+Cohort, data = both)
-
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-exp(summary(ate)$coefficients[3,1])
-exp(summary(ate)$coefficients[4,1])
-
-# January start date
-ate<-lm(log_d_earn~treatment, data=subset(both,Cohort<"Jan."))
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-
-# July start date 
-ate<-lm(log_d_earn~treatment, data=subset(both,Cohort>"Jan."))
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-```
-
-```{r starting income_effect}
-
-#Count of quartiles
-length(which(treatment$real_yearly_earnings.1_pre<16853))
-length(which(treatment$real_yearly_earnings.1_pre>16853&treatment$real_yearly_earnings.1_pre<18709))
-length(which(treatment$real_yearly_earnings.1_pre<21675&treatment$real_yearly_earnings.1_pre>18709))
-length(which(treatment$real_yearly_earnings.1_pre<21675))
-
-# First quartile
-ate<-lm(log_d_earn~treatment, data=subset(both,real_yearly_earnings.1_pre<16853))
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-
-#Second quartile
-ate<-lm(log_d_earn~treatment, data=subset(both,real_yearly_earnings.1_pre>16853&real_yearly_earnings.1_pre<18709))
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-
-#Third quartile
-ate<-lm(log_d_earn~treatment, data=subset(both,real_yearly_earnings.1_pre<21675&real_yearly_earnings.1_pre>18709))
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-
-#Fourth quartile
-ate<-lm(log_d_earn~treatment, data=subset(both,real_yearly_earnings.1_pre<21675))
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-
-#Interaction Terms
-ate<-lm(log_d_earn~treatment + real_yearly_earnings.1_pre*treatment + real_yearly_earnings.1_pre, data = both)
-
-summary(ate)
-exp(summary(ate)$coefficients[2,1])
-exp(summary(ate)$coefficients[3,1])
-exp(summary(ate)$coefficients[4,1])
-
-ate<-lm(log_d_earn~treatment + Cohort*treatment+Cohort, data = both)
-```
-
-
-# Part III: Decomposition
-
-In the previous tutorial, we found that women had larger returns to Year Up than men. In this tutorial, we want to know what drives this difference, and whether it can be explained by various factors, such as men's pre Year Up earnings or women's occupational choices. This is called a *decomposition*. There are many different decomposition methods. The one we use here is called Gelbach decomposition, after [Gelbach, (2016)](http://dx.doi.org/10.1086/683668).   
-
-Think of the example of the gender wage gap, *i.e.* the difference in earnings between men and women. The unconditional difference in mean earnings between men and women is currently around 20 percent in the United States - men have 20 percent higher average earnings overall [(see Blau and Kahn, (2016), for a study on the gender wage gap)](http://www.nber.org/papers/w21913). 
-
-However, around half of that, i.e. 10 percentage points in the difference, can be "explained" by other factors, such as women's labor force participation, working hours, occupational choice, family status or whether they have children. What we mean by "can be explained",  is that if we compare men and women with the same occupation, with the same employment status and working hours and the same family status - the raw gap diminishes to 10 percent. 
-
-Those factors can "account" for the difference - because men and women have different distributions of employment, occupation and family status. On the other hand, that also means that there is a residual 10 percent difference in earnings between men and women that we cannot explain away with observable variables. This difference may be due to discrimination, or preferences or any other factor that we as researchers, do not directy observe in the data. 
-
-The goal of a decomposition analysis, is to know how much of the explained difference can be attributed to which factor: of the 10 percentage points in explained variation of the gender pay gap, how much can be explained by differences in education, versus occupational choice, versus child bearing decisions?
-
-
-## Steps
-
-In the previous parts, we have seen that mens' returns to Year Up are significantly smaller than womens'. Why is that? In this part, we want to understand where this difference is coming from. What drives womens' higher returns to Year Up compared to men? What does that mean for Year Up's admittance strategy and program design? Is it that Year Up works less well for their male participants or is it just that women make greater gains relative to men?
-
-To answer these questions, we need to decompose the gender gap in program returns. To that end, we want to look at all the different components that go into the returns analysis (1) actual changes in wages, (2) counterfactual changes in wages, (3) the difference between the two.
-
-We take the following steps: \
-1) We run linear regressions of earnings changes on gender and other covariates. \
-2) Using a Gelbach decomposition method, we decompose the gender gap in earning changes by comparing the unconditional difference to a full model. 
-3) We explain the Gelbach decomposition more formally.\
-4) We explore what the next steps need to be. \
-
-```{r, echo = FALSE}
-# load cleaned CPS data
-save_folder <- "intermediate"
-
-# cps<-readRDS("cols.rds") #the cps sample we built the model on 
-yu_treatment_control <- readRDS(paste(save_folder, "yu_treatment_control.rds", sep="/")) #the constructed sample with alumni and counterfactuals
-```
-
-```{r,echo = FALSE}
-# class(cps)<-class(as.data.frame(cps))
-# categorical<-c("year","region_large","occ1digit")
-# cps[ , categorical] <- lapply(cps[ ,categorical] , factor)
-cps_vars<--readRDS(paste(save_folder, "vars.rds", sep="/"))
-```
-
-
-```{r,echo = FALSE}
-
-yu_treatment_control <- yu_treatment_control %>% rename(male=sex)
-yu_df<- yu_treatment_control %>% filter(treatment==1)
-
-
-yu_df <- dummy_cols(yu_df, select_columns = 'occ1digit')
-
-```
-
-## Correlations
-```{r,echo = TRUE }
-outcome<- "log_d_earn"#"log_d_earn"#""
-
-male<- c("male")#,#"log_real_yearly_earnings_1")
-
-# cps <- dummy_cols(cps, select_columns = 'occ1digit')
-occ_group1 <-yu_df %>%
-  select(tidyselect::vars_select(colnames(cps_vars), starts_with('occ1digit_', ignore.case = TRUE)))
-occupation<-colnames(occ_group1)
-occupation<-occupation[occupation!="occ1digit_transport"] 
-
-tasks<-c("task_abstract","task_routine","task_manual" )
-background1<-c("age","race_white","race_black","race_asian","edu_num")
-
-occexp<- c("experience",tasks)#,occupation)
-            
-
-region<-c("cty_pop2000","cz_pop2000","intersects_msa",
-                    "cs00_seg_inc","cs00_seg_inc_pov25","cs00_seg_inc_aff75",
-                    "cs_race_theil_2000","gini99","poor_share","inc_share_1perc",
-                    "frac_middleclass","rel_tot","cs_frac_black",
-                    "cs_frac_hisp","unemp_rate","pop_d_2000_1980","lf_d_2000_1980",
-                    "cs_labforce","cs_elf_ind_man","cs_born_foreign","mig_inflow",
-                    "mig_outflow","pop_density","frac_traveltime_lt15","hhinc00",
-                    "median_house_value","cs_educ_ba",
-                    "cs_fam_wkidsinglemom","crime_total","subcty_exp_pc",
-                    "taxrate","tax_st_diff_top20")
-
-```
-
-When doing decompositions, as in this case a gender gap decomposition, it is useful to know how the variables in our data are correlated with one another. This helps to get a first idea of which variables may be influencing the gap and how. Presenting pairwise correlations is easy with the `corrplot` function from the `corrplot` package. On the table below, if the (unadjusted) p-value for a pair of variables is less than 0.05, its square is not colored. 
-
-Note that here we are excluding the geography variables and occupation groups for better readability of the plot.
-
-```{r cor plot, echo = TRUE, fig.width=5, fig.height=5, warning=FALSE}
-# Note: if the plot looks too cramped, try increasing fig.width and fig.height in the line above
-yu_dfsum<-yu_df %>% dplyr::select(log_d_earn, real_yearly_earnings.1_pre,  real_yearly_earnings.2_post, where(is.numeric), -c(PACE_ID,value,RTIa, state_fips, fips,treatment, log_real_yearly_earnings_1,cz,county_fips, metfips))
-
-yu_dfsum <- yu_dfsum %>% dplyr::select(-c(starts_with('occ1digit_', ignore.case = TRUE),all_of(region)))
-pairwise_pvalues <- psych::corr.test(yu_dfsum, yu_dfsum)$p
-corrplot(cor(yu_dfsum),
-         type="upper",
-         tl.col="black",
-         order="hclust",
-         tl.cex=1,
-         addgrid.col = "black",
-         p.mat=pairwise_pvalues,
-         sig.level=0.05,
-         number.font=10,
-         insig="blank")
-```
-
-## The gender difference in post YU earning changes
-### Regression Analysis
-
-**Outcome:  Difference in log earnings between t and t+1 for program particpants** \
-Since we are interested in decomposing the gender gap in treatment outcomes (Year Up returns), which in itself is a composite product of actual wage changes and counterfactual wage changes, it is instructive to start with looking at the gap in these separates building blocks first.  Let's start with simple linear regressions on the difference in log earnings between t and t+1 for program participants (actual observed wage changes of pre and post earnings). 
-
-```{r,echo = TRUE}
-outcome<- "log_d_earn"
-lm1<- as.formula(
-  paste(outcome,
-        paste(c(male), collapse = " + "),
-        sep = " ~ "))
-model1<-lm(lm1, data = yu_df)
-
-lm2<- as.formula(
-  paste(outcome,
-        paste(c(male,background1), collapse = " + "),
-        sep = " ~ "))
-model2<-lm(lm2, data = yu_df)
-
-lm3<- as.formula(
-  paste(outcome,
-        paste(c(male,background1,occexp), collapse = " + "),
-        sep = " ~ "))
-model3<-lm(lm3, data = yu_df)
-
-lm4<- as.formula(
-  paste(outcome,
-        paste(c(male,background1,occexp,region), collapse = " + "),
-       sep = " ~ "))
-model4<-lm(lm4,  data = yu_df)
-
-lm5<- as.formula(
-  paste(outcome,
-        paste(c(male,background1,occexp,region, "log_real_yearly_earnings_1"), collapse = " + "),
-       sep = " ~ "))
-model5<-lm(lm5,  data = yu_df)
-```
-
-```{r,  echo = TRUE, results = 'asis'}
-stargazer(model1, model2,model3, model4,model5,
-          title="OLS regression of difference in log earnings between t and t+1 for program particpants, consecutively adding more covariates",
-          type = 'html',
-          omit=c(background1,occexp,region,"log_real_yearly_earnings_1"),
-          df = FALSE,
-          add.lines = list(c("Demographics", "No", "Yes", "Yes", "Yes","Yes"),c("Occupation+Experience", "No", "No","Yes","Yes", "Yes"),  c("Local labor market characteristics", "No", "No", "No", "Yes","Yes" ), c("Earnings at t", "No", "No", "No", "No","Yes")),
-          notes.append = FALSE,
-          notes = c("Dependent variable: change in log earnings.","Significance level: * p$<$0.10, ** p$<$0.05, *** p$<$0.01. For further notes, see text." )
-)
-
-```
-
-The regression table shows results from 5 linear regressions, in each of which we keep adding more controls, which means that we add more variables beyond male to the regression.
-
-- Column 1 includes just the male coefficient, Column 2 additionally includes age, race white, race asian, race black and years of schooling. Column 3 additionally to the coviarites in column 2 includes experience, occupation group indicators and task measures. Column 4 also includes YU site location labor market characteristics like population density,  local unemployment rates or average schooling levels. Column 5 finally additionally controls for pre-treatment earnings. 
-<p>
-
-
-Column 1  is the univariate regression of difference in log earnings on male, i.e. the unconditional gender wage change gap: 
-
-$$log(\Delta y_{i})= \beta_1 Male + \epsilon{_i}$$
-
-- The male coefficient tells us that overall on average, men have higher earnings changes compared to women.
-Specifically, this unconditional gender difference on the difference in log earnings between t and t+1 for Year up candidates is 0.061 (to convert the coefficient to the log odds ratio (since our outcome is log(a)-log(b)=log(a/b), we can take the expoential and get: exp(0.042)=1.043), i.e. the ratio of male to female earning changes is 1.043. In other words men have 4.3% higher YOY earning changes before and after YU than females. \
-
-
-- In columns 2 to 5, we consecutively add more variables to the regression, as denoted in the bottom rows of the table and explained in the notes above. 
-
-$$log(\Delta y_{i})= \beta_1 Male + \sum_{k=1}^K\beta_k Z_{ik}+  \epsilon{_i}$$
-
-- We do not report the coefficients to those other variables, because we are not interested in them, they are merely "controls".  "Controlling" for a covariate means you add it to a regression and thereby net out the effect this variable may have on the outcome. It is as if you were re-weighting the sample to have the same distribution with respect to the control variable. Here, we do not actually care what the effect of the control variable itself is. 
-
-- In column 2 we add demographics such as the race, education and age of the individual to the regression.  This decreases the male coefficient to 0.034 - i.e. holding constant race, education and age, decreases the difference in earning changes for men to 3.4%. Or: if race, education and age were on average the same across men and women in our sample, the difference in gender for earnings changes would be 0.034.  
-
-- What that means is that race, education and age are correlated with both male and the outcome, and ignoring those variables makes the gender gap larger that it should be (we "overestimate" the gender gap), while in truth it may be the case that men are older in our sample and older people have higher earning changes - and therefore some of the effect should be attributed to age rather than gender.  
-
-
-- Column 5 shows that in the "the full model", controlling for everything we think should go into that regression, the gender gap is at 0.035, or 3.5% (=exp(0.035)) greater change in earnings for men. That is smaller than in column 1 but larger than in column 2.  Holding constant age, education, experience, race, prior occupation group and task measures within that occupation, location characteristics and previous wages, we reduce the unconditional gender gap. 
-
-### Gelbach Decomposition of Year Up wage changes
-
-We next want to know, which covariate contributes how and how much, in reducing the unconditional gender difference in earnings changes.
-
-Gelbach [(Gelbach, 2016)](http://dx.doi.org/10.1086/683668) proposes a decomposition method that compares a baseline model with just our coefficient of interest (here male), with a full model including all relevant variables and decomposes the contribution of all the variables to the changes in the coefficient of interest.
-
-As we see in the regression table, controling for or including more variables in the regression, decreases the gender gap (it decreases the size of the positive and significant coefficient of male on earning changes), from 6.3% to 5.5% higher average earning changes for men compared to women after Year Up. 
-
-<p>
-
-```{r,  echo = TRUE, results = 'asis'}
-
-dec_long_2 <- dec_covar(object = model5, var_main = c("male"), format = "long", add_coefs = TRUE, conf.int = TRUE)
-
-# add occupation group
- dec_long_2a<-dec_long_2 %>%
-   mutate(group= if_else(covariate %in% c("age", "age2"), "age",
-                         if_else(covariate %in% c("race_white", "race_black", "race_asian"), "race",
-                                if_else(covariate %in% c("experience", "experience2"), "experience",
-                                        if_else(covariate %in% c("log_real_yearly_earnings_1"), "pre-earnings",
-   if_else(covariate %in% occupation, "occupation_group",
-           if_else(covariate %in% tasks, "occupation_tasks",
-           if_else(covariate %in% region, "regional",   
-                         "education"))))))))
-# 
-# 
-sumthose<-  c("beta_K", "beta_K_low", "beta_K_high",
-              "gamma","gamma_low", "gamma_high", "delta")
-
-keepthose<- c("beta_var_base", "beta_var_full")
-
-dec_long_2b <- dec_long_2a %>%
-  group_by(group)%>%
-  summarise_at(vars(all_of(sumthose)), funs(sum), na.rm=TRUE)%>%
-  rename(covariate=group)
-
-dec_long_2c <- dec_long_2a %>%
-  group_by(group)%>%
-  summarise_at(vars(all_of(keepthose)), funs(max), na.rm=TRUE)%>%
-  rename(covariate=group)
-
-dec_long_2d <-left_join(dec_long_2b,dec_long_2c,by="covariate")
-
-dec_long_2d$variable<-c(rep("male", times=(dim(dec_long_2d)[1])))
-
-plot_dec(dec_long_2d) +
-   ggtitle("Effect of each covariate group on the male coef")
-```
-
-
-<p>
-The plot depicts the differences in the male coefficients between column 1 and 5 in the regression table above.  
-
-- Model base (black vertical line) represents the size of the male coefficient in the univariate regression of male difference in earnings changes, i.e. the unconditional gender wage change gap in column 1. 
-- Model full (dotted blue vertical line)  represents the size of the male coefficient in the specification in column 5, where we also control for (i.e. include as other covariates in the regression) a host of factors such as age, experience, race, prior occupation group, location characteristics and pre earnings. 
-
-As noted above, the unconditional difference, i.e. the male coefficient in column 1 is 0.042 while the male coefficient in the full model is reduced to 0.035. This also means that we "explain" 0.007 log points of the gender gap through the extra controls. This is the gap between the black and blue line. 
-
-How do the included covariates contribute to that change in the coefficient? To better read the results, we group covariates together (by summing over them). Here, we group the age terms, race indicators, years of education, experience, occupation grups, occupational tasks and all regional covariates together. 
-
-The length of the horizontal arms going from the full model indicate the contribution of each variable (-group) to the male coefficient in the full model. It tells us what the male coefficient would be, if
-(conditional on all the other variables in the model) the means of that variable were the same across males and females. That is, if we were to re-weight our sample such that it had equal means for men and women in the respective covariate the dot of that covariate arm would be the size of the male coefficient. 
-
-- For example, all else constant, if the distribution of age were the same across both males and females in YU participants, the gender gap would be 0.009 log points smaller, so would be 0.033. That is, as we can see, actually smaller than the full model coefficient ends up being. We can also say that age explains 0.009 log points of the gender gap. The reason why the male coefficient ends up being larger than the respective race, age or location contributions, is because other covariates "pull" the male coefficient into the opposite direction. 
-
-- Earnings at year t, has the opposite effect, meaning that controlling for that factor makes the gender gap larger: If males and females had the same pre-treatment earnings in our sample, the gap would be even larger at 7%.
-
-
-### Gamma-beta plot
-
-The result that certain covariates would increase the gender gap as opposed to reducing it, can be counter-intuitive. How come some variables have a positive and others a negative contribution to explaining the variation in the gender gap? To better understand where this result comes from, it is instructive to look at the two components that make up this "contribution"  $\delta$ (delta) here - $\gamma$ and $\beta$ (gamma and beta). (We explain this more formally below, too).  
-
-
-- Beta denotes how the covariate is directly correlated with the outcome (e.g. how age is correlated with earnings changes), 
-- While gamma denotes how the covariate is correlated with gender (how age is correlated with male).
-- The size of the bubbles represent the absolute size of delta (how much age contributes in explaining the explainable gender gap). 
-
-<p>
-<center>
-```{r, echo = TRUE}
-dec_long_2<-dec_long_2 %>%
-  filter(!(covariate %in% c(region, colnames(occ_group1))))
-
-plot_gamma_beta(dec_long_2, add_CI = TRUE) +
-  ggtitle("Covariate impact: direct (beta) and indirect (gamma) impact")
-```
-(For better visibility, we take out the regional covariates and occupation group dummies here.) 
-</center>
-<p>
-
-Let's inspect a few covariates with different beta and gammas in turn, to understand what can drive the sign and size of delta. 
-
-- Starting with age, we can see that both beta and gamma are positive, meaning that age is both positively correlated with earning changes (beta, direct effect) and with male (gamma, indirect effect). It means that older individuals have higher earning changes, and that the men in our sample are older than females. If males and females in our sample were the same age on average, that would reduce the gender gap. 
-
-- When we do not control for age, the male-female gap in earning changes is larger than it actually is when we compare individuals of equal age. The larger raw difference can therefore be attributed to the difference in age between men and women in our sample and the fact that older individuals see greater changes (both needs to be true, otherwise the age difference in the sample would be irrelevant if age and earning were unrelated). 
-
-- For pre-treatment earnings (log_real_yearly_earnings_1), gamma is positive, but beta is negative, meaning that men have higher pre-treatment earnings, but higher pre-treatment earnings are associated with lower earnings changes. This means that if the distribution of pre-treatment earnings was the same across males and females in our sample, the gender gap would be even larger. 
-
-- For black, both beta and gamma are negative, meaning that black participants have smaller earning changes, and more blacks in our sample are female than male. If the share of blacks across males and females in our sample were the same, we would see a smaller gender gap. 
-
-This shows that in order to understand what drives the decomposition pieces, we really need to  understand the covarariances between both the omitted variable and the outcome and the omitted variable and the coefficient (male here) in question.
-<p>
-
-
-## Gelbach decomposition formally
-
-For those interested in the foundations, this section lays out the Gelbach decomposition more formally.
-
-In a regression where we are interested in the effect of some variable X on Y, where we know that a third variable Z is also related to Y and X but where we do not include that Z, Z is an "omitted variable". Think of our above example, where male is our X, earning changes our Y and Z is age. When we omitted age from the regression, some of the effect of age on earnings was wrongly attributed to male, because male and age are positively correlated (as we saw in both the correlation plot, as well as the gamma-beta plot). In econometrics, we call this an "omitted variable bias", i.e. a biased estimate of some true effect, because you are not controlling for a variable you should be controlling for. 
-
-
-Gelbach's decomposition, essentially decomposes the omitted variable bias from excluding other variables into their respective contributions. 
-
-For illustration, take  the two regression equations below,  representing a full and a baseline model, respectively. Let's assume that the "missing" variables $Z_{i,s}$ in the base model are black and age. 
-
-(1):
-\begin{equation}
- ln(changeEarnings)_{sit}= \beta_1^{base}Male+ \epsilon_{sit}
-\end{equation}
-
-
-(2):	
-
-\begin{equation}\label{eq:gel1}
-	ln(changeEarnings)_{sit}= \beta_1^{full}Male+\beta_2Z_{i,s}+ \epsilon_{sit} 
-\end{equation}
-
-
-where (1) is the baseline model, (2) is the "full" model here. 
-
-$\beta_1^{base}$ then includes both the "true" effect of male on earnings, as well as the omitted variable bias: 
-	
-	
-\begin{equation}
-\beta_1^{base}= \beta_1+\delta_{Male}= \beta_1+\Gamma\beta_2
-\end{equation}
-
- The difference in $\beta_1^{base}$ and $\beta_1^{full}$ is exactly $\delta_{Male}$ - and $\delta_{Male}$ is the "omitted variable bias".  $\delta_{Male}$ is made up of $\Gamma\beta_2$ of all omitted variables. $\Gamma$ is the matrix of coefficients from projecting the columns of $Z_{i,s}$ on $Male$, i.e. here how male is correlated with age and black. So \Gamma comes from regressions of:
-\begin{equation}
-	Black= \Gamma_0^{Black} +Male\Gamma_{Male}^{Black}+ W
-\end{equation}
-\begin{equation}\label{eq:gel5}
-	Age= \Gamma_0^{age} +Male\Gamma_{Male}^{age}+ W
-\end{equation}
-
-where W are residuals.
-The overall $\delta_{Male}$ can hence be decomposed into the contributions of the different variables that are omitted:
-
-\begin{equation}\label{eq:gel6}
-\beta_1^{full}-\beta_1^{base} = \delta_{Male}=\underbrace{\beta_2^{Black}\Gamma_{Male}^{Black}}_{\text{Black contribution}}+\underbrace{\beta_2^{age}\Gamma_{Male}^{age}}_{\text{age contribution}}= \delta_{male}^{Black} + \delta_{male}^{age} 
-\end{equation}
-	
-What this decomposition tells us is how much of the male gap is explained by variation in black and age, $\delta_{male}^{Black}$ and $\delta_{male}^{age}$ are their respective components of the explained part (the part that goes away after controlling for those covarariates). These "contributions" always have the same unit as the outcome - in our case we are decomposing the changes in log earnings- so the $\delta$s are can also be interpreted as their contribution in explaining the gender gap in log points.  
-
-As we know from the analysis above (gamma-beta plot), each $\delta$ is a product of $\beta$ and $\gamma$ - the respective direct effect (how the covariates is correlated with the outcome) and indirect effect (how the covariate is correlated with the main covariate of interest we are decomposing).
-
-
-One nice feature of the Gelbach decomposition is that the deltas are additive, which means you can group them together into meaninful groups and  look at their joint contribution. In our example below we e.g. group together the many location characteristic variables into one "region" group - we simply want to know how controling for regional characteristics in general impacts the gender gap, not each single one of them. This tremendously facilitates illustration, discussion and therefore usefulness of the decomposition. 
-
-A word of caution and the reason why we do the Gelbach decomposition: after having seeing the regression table above, where we consecutively added more controls,  you may be tempted to say "Why can I not simply consecutively add each covariate to a regression and look at how the coefficient changes based on adding the extra control"? This used to indeed be common practice among empirical researchers. However, a main point of Gelbach's paper (you should take a look at the paper itself, you can find it in the course materials) was to show the flaw in such an approach. It turns out that it matters a lot in which order you add covariates to the model (e.g in the regression table above, we could have either first added location covariates in one regression and then add occuation covariates or the other way around). That is why Gelbach proposes to compare a full and a baseline model and properly decompose the contributions of all additional covariates to the coefficient in the base model. 
-
-## Gender Decomposition
-
-### Gender - Counterfactual Predictions
-
-The tutorial took us through the steps of decomposing the change in actual wages. This was accomplished by selecting the subset "treatment=1" in the "yu_treatment_control" dataframe. To do the same analysis for the counterfactual, we select the subset "treatment=0".
-
-```{r, echo=FALSE}
-yu_df_counter <- yu_treatment_control %>% filter(treatment==0)
-yu_df_counter <- dummy_cols(yu_df_counter, select_columns = 'occ1digit')
-```
-
-
-```{r,echo = TRUE}
-outcome<- "log_d_earn"
-lm1<- as.formula(
-  paste(outcome,
-        paste(c(male), collapse = " + "),
-        sep = " ~ "))
-model1<-lm(lm1, data = yu_df_counter)
-
-lm2<- as.formula(
-  paste(outcome,
-        paste(c(male,background1), collapse = " + "),
-        sep = " ~ "))
-model2<-lm(lm2, data = yu_df_counter)
-
-lm3<- as.formula(
-  paste(outcome,
-        paste(c(male,background1,occexp), collapse = " + "),
-        sep = " ~ "))
-model3<-lm(lm3, data = yu_df_counter)
-
-lm4<- as.formula(
-  paste(outcome,
-        paste(c(male,background1,occexp,region), collapse = " + "),
-       sep = " ~ "))
-model4<-lm(lm4,  data = yu_df_counter)
-
-lm5<- as.formula(
-  paste(outcome,
-        paste(c(male,background1,occexp,region, "log_real_yearly_earnings_1"), collapse = " + "),
-       sep = " ~ "))
-model5<-lm(lm5,  data = yu_df_counter)
-```
-
-```{r,  echo = TRUE, results = 'asis'}
-stargazer(model1, model2,model3, model4,model5,
-          title="OLS regression of counterfactual difference in log earnings between t and t+1 for program particpants, consecutively adding more covariates",
-          type = 'html',
-          omit=c(background1,occexp,region,"log_real_yearly_earnings_1"),
-          df = FALSE,
-          add.lines = list(c("Demographics", "No", "Yes", "Yes", "Yes","Yes"),c("Occupation+Experience", "No", "No","Yes","Yes", "Yes"),  c("Local labor market characteristics", "No", "No", "No", "Yes","Yes" ), c("Earnings at t", "No", "No", "No", "No","Yes")),
-          notes.append = FALSE,
-          notes = c("Dependent variable: predicted change in log earnings.","Significance level: * p$<$0.10, ** p$<$0.05, *** p$<$0.01. For further notes, see text." )
-)
-
-```
-
-```{r,  echo = TRUE, results = 'asis'}
-
-dec_long_2 <- dec_covar(object = model5, var_main = c("male"), format = "long", add_coefs = TRUE, conf.int = TRUE)
-
-# add occupation group
- dec_long_2a<-dec_long_2 %>%
-   mutate(group= if_else(covariate %in% c("age", "age2"), "age",
-                         if_else(covariate %in% c("race_white", "race_black", "race_asian"), "race",
-                                if_else(covariate %in% c("experience", "experience2"), "experience",
-                                        if_else(covariate %in% c("log_real_yearly_earnings_1"), "pre-earnings",
-   if_else(covariate %in% occupation, "occupation_group",
-           if_else(covariate %in% tasks, "occupation_tasks",
-           if_else(covariate %in% region, "regional",   
-                         "education"))))))))
-# 
-# 
-sumthose<-  c("beta_K", "beta_K_low", "beta_K_high",
-              "gamma","gamma_low", "gamma_high", "delta")
-
-keepthose<- c("beta_var_base", "beta_var_full")
-
-dec_long_2b <- dec_long_2a %>%
-  group_by(group)%>%
-  summarise_at(vars(all_of(sumthose)), funs(sum), na.rm=TRUE)%>%
-  rename(covariate=group)
-
-dec_long_2c <- dec_long_2a %>%
-  group_by(group)%>%
-  summarise_at(vars(all_of(keepthose)), funs(max), na.rm=TRUE)%>%
-  rename(covariate=group)
-
-dec_long_2d <-left_join(dec_long_2b,dec_long_2c,by="covariate")
-
-dec_long_2d$variable<-c(rep("male", times=(dim(dec_long_2d)[1])))
-
-plot_dec(dec_long_2d) +
-   ggtitle("Effect of each covariate group on the male coef")
-```
-
-### Gender - Difference in actual vs counterfactual change in earnings
-
-Finally, to get the difference in actual vs counterfactual earnings, we take a simple difference. This was accomplished in code by reshaping the yu_treatment_control dataframe from long to wide, using the "treatment" variable as the key. Then, the actual column was subtracted by the counterfactual column to produce the change column, which is the outcome variable in the decomposition analysis.
-
-```{r, echo=FALSE}
-yu_df_diff <- tidyr::spread(yu_treatment_control, treatment, log_d_earn)
-names(yu_df_diff)[names(yu_df_diff)=="0"] <- "log_d_earn_counterfactual"
-names(yu_df_diff)[names(yu_df_diff)=="1"] <- "log_d_earn_actual"
-yu_df_diff$log_d_earn_change <- (yu_df_diff$log_d_earn_actual - yu_df_diff$log_d_earn_counterfactual)
-yu_df_diff <- dummy_cols(yu_df_diff, select_columns = 'occ1digit')
-```
-
-```{r,echo = TRUE}
-outcome<- "log_d_earn_change"
-lm1<- as.formula(
-  paste(outcome,
-        paste(c(male), collapse = " + "),
-        sep = " ~ "))
-model1<-lm(lm1, data = yu_df_diff)
-
-lm2<- as.formula(
-  paste(outcome,
-        paste(c(male,background1), collapse = " + "),
-        sep = " ~ "))
-model2<-lm(lm2, data = yu_df_diff)
-
-lm3<- as.formula(
-  paste(outcome,
-        paste(c(male,background1,occexp), collapse = " + "),
-        sep = " ~ "))
-model3<-lm(lm3, data = yu_df_diff)
-
-lm4<- as.formula(
-  paste(outcome,
-        paste(c(male,background1,occexp,region), collapse = " + "),
-       sep = " ~ "))
-model4<-lm(lm4,  data = yu_df_diff)
-
-lm5<- as.formula(
-  paste(outcome,
-        paste(c(male,background1,occexp,region, "log_real_yearly_earnings_1"), collapse = " + "),
-       sep = " ~ "))
-model5<-lm(lm5,  data = yu_df_diff)
-```
-
-```{r,  echo = TRUE, results = 'asis'}
-stargazer(model1, model2,model3, model4,model5,
-          title="OLS regression of counterfactual difference in log earnings between t and t+1 for program particpants, consecutively adding more covariates",
-          type = 'html',
-          omit=c(background1,occexp,region,"log_real_yearly_earnings_1"),
-          df = FALSE,
-          add.lines = list(c("Demographics", "No", "Yes", "Yes", "Yes","Yes"),c("Occupation+Experience", "No", "No","Yes","Yes", "Yes"),  c("Local labor market characteristics", "No", "No", "No", "Yes","Yes" ), c("Earnings at t", "No", "No", "No", "No","Yes")),
-          notes.append = FALSE,
-          notes = c("Dependent variable: predicted change in log earnings.","Significance level: * p$<$0.10, ** p$<$0.05, *** p$<$0.01. For further notes, see text." )
-)
-
-```
-
-```{r,  echo = TRUE, results = 'asis'}
-
-dec_long_2 <- dec_covar(object = model5, var_main = c("male"), format = "long", add_coefs = TRUE, conf.int = TRUE)
-
-# add occupation group
- dec_long_2a<-dec_long_2 %>%
-   mutate(group= if_else(covariate %in% c("age", "age2"), "age",
-                         if_else(covariate %in% c("race_white", "race_black", "race_asian"), "race",
-                                if_else(covariate %in% c("experience", "experience2"), "experience",
-                                        if_else(covariate %in% c("log_real_yearly_earnings_1"), "pre-earnings",
-   if_else(covariate %in% occupation, "occupation_group",
-           if_else(covariate %in% tasks, "occupation_tasks",
-           if_else(covariate %in% region, "regional",   
-                         "education"))))))))
-# 
-# 
-sumthose<-  c("beta_K", "beta_K_low", "beta_K_high",
-              "gamma","gamma_low", "gamma_high", "delta")
-
-keepthose<- c("beta_var_base", "beta_var_full")
-
-dec_long_2b <- dec_long_2a %>%
-  group_by(group)%>%
-  summarise_at(vars(all_of(sumthose)), funs(sum), na.rm=TRUE)%>%
-  rename(covariate=group)
-
-dec_long_2c <- dec_long_2a %>%
-  group_by(group)%>%
-  summarise_at(vars(all_of(keepthose)), funs(max), na.rm=TRUE)%>%
-  rename(covariate=group)
-
-dec_long_2d <-left_join(dec_long_2b,dec_long_2c,by="covariate")
-
-dec_long_2d$variable<-c(rep("male", times=(dim(dec_long_2d)[1])))
-
-plot_dec(dec_long_2d) +
-   ggtitle("Effect of each covariate group on the male coef")
-```
-
-```{r, echo = TRUE}
-dec_long_2<-dec_long_2 %>%
-  filter(!(covariate %in% c(region, colnames(occ_group1))))
-
-plot_gamma_beta(dec_long_2, add_CI = TRUE) +
-  ggtitle("Covariate impact: direct (beta) and indirect (gamma) impact")
-```
-
-
-## Race Decomposition
-
-### Race (Black) - Actual changes in wage
-
-```{r,echo = FALSE}
-
-yu_treatment_control <- yu_treatment_control %>% rename(black=race_black)
-yu_df<- yu_treatment_control %>% filter(treatment==1)
-
-
-yu_df <- dummy_cols(yu_df, select_columns = 'occ1digit')
-
-```
-
-```{r,echo = TRUE }
-outcome<- "log_d_earn"#"log_d_earn"#""
-
-black<- c("black")#,#"log_real_yearly_earnings_1")
-
-# cps <- dummy_cols(cps, select_columns = 'occ1digit')
-occ_group1 <-yu_df %>%
-  select(tidyselect::vars_select(colnames(cps_vars), starts_with('occ1digit_', ignore.case = TRUE)))
-occupation<-colnames(occ_group1)
-occupation<-occupation[occupation!="occ1digit_transport"] 
-
-tasks<-c("task_abstract","task_routine","task_manual" )
-background1<-c("age","race_white","race_asian","edu_num","male")
-
-occexp<- c("experience",tasks)#,occupation)
-            
-
-region<-c("cty_pop2000","cz_pop2000","intersects_msa",
-                    "cs00_seg_inc","cs00_seg_inc_pov25","cs00_seg_inc_aff75",
-                    "cs_race_theil_2000","gini99","poor_share","inc_share_1perc",
-                    "frac_middleclass","rel_tot","cs_frac_black",
-                    "cs_frac_hisp","unemp_rate","pop_d_2000_1980","lf_d_2000_1980",
-                    "cs_labforce","cs_elf_ind_man","cs_born_foreign","mig_inflow",
-                    "mig_outflow","pop_density","frac_traveltime_lt15","hhinc00",
-                    "median_house_value","cs_educ_ba",
-                    "cs_fam_wkidsinglemom","crime_total","subcty_exp_pc",
-                    "taxrate","tax_st_diff_top20")
-
-```
-
-
-```{r,echo = TRUE}
-outcome<- "log_d_earn"
-lm1<- as.formula(
-  paste(outcome,
-        paste(c(black), collapse = " + "),
-        sep = " ~ "))
-model1<-lm(lm1, data = yu_df)
-
-lm2<- as.formula(
-  paste(outcome,
-        paste(c(black,background1), collapse = " + "),
-        sep = " ~ "))
-model2<-lm(lm2, data = yu_df)
-
-lm3<- as.formula(
-  paste(outcome,
-        paste(c(black,background1,occexp), collapse = " + "),
-        sep = " ~ "))
-model3<-lm(lm3, data = yu_df)
-
-lm4<- as.formula(
-  paste(outcome,
-        paste(c(black,background1,occexp,region), collapse = " + "),
-       sep = " ~ "))
-model4<-lm(lm4,  data = yu_df)
-
-lm5<- as.formula(
-  paste(outcome,
-        paste(c(black,background1,occexp,region, "log_real_yearly_earnings_1"), collapse = " + "),
-       sep = " ~ "))
-model5<-lm(lm5,  data = yu_df)
-```
-
-```{r,  echo = TRUE, results = 'asis'}
-
-dec_long_2 <- dec_covar(object = model5, var_main = c("black"), format = "long", add_coefs = TRUE, conf.int = TRUE)
-
-# add occupation group
- dec_long_2a<-dec_long_2 %>%
-   mutate(group= if_else(covariate %in% c("male"), "male",
-            if_else(covariate %in% c("age", "age2"), "age",
-                         if_else(covariate %in% c("race_white","race_asian"), "race",
-                                if_else(covariate %in% c("experience", "experience2"), "experience",
-                                        if_else(covariate %in% c("log_real_yearly_earnings_1"), "pre-earnings",
-   if_else(covariate %in% occupation, "occupation_group",
-           if_else(covariate %in% tasks, "occupation_tasks",
-           if_else(covariate %in% region, "regional",   
-                         "education")))))))))
-# 
-# 
-sumthose<-  c("beta_K", "beta_K_low", "beta_K_high",
-              "gamma","gamma_low", "gamma_high", "delta")
-
-keepthose<- c("beta_var_base", "beta_var_full")
-
-dec_long_2b <- dec_long_2a %>%
-  group_by(group)%>%
-  summarise_at(vars(all_of(sumthose)), funs(sum), na.rm=TRUE)%>%
-  rename(covariate=group)
-
-dec_long_2c <- dec_long_2a %>%
-  group_by(group)%>%
-  summarise_at(vars(all_of(keepthose)), funs(max), na.rm=TRUE)%>%
-  rename(covariate=group)
-
-dec_long_2d <-left_join(dec_long_2b,dec_long_2c,by="covariate")
-
-dec_long_2d$variable<-c(rep("black", times=(dim(dec_long_2d)[1])))
-
-plot_dec(dec_long_2d) +
-   ggtitle("Effect of each covariate group on the black coef")
-```
-
-
-### Race (Black) - Counterfactual Predictions
-
-The tutorial took us through the steps of decomposing the change in actual wages. This was accomplished by selecting the subset "treatment=1" in the "yu_treatment_control" dataframe. To do the same analysis for the counterfactual, we select the subset "treatment=0".
-
-```{r, echo=FALSE}
-yu_df_counter <- yu_treatment_control %>% filter(treatment==0)
-yu_df_counter <- dummy_cols(yu_df_counter, select_columns = 'occ1digit')
-```
-
-
-```{r,echo = TRUE}
-outcome<- "log_d_earn"
-lm1<- as.formula(
-  paste(outcome,
-        paste(c(black), collapse = " + "),
-        sep = " ~ "))
-model1<-lm(lm1, data = yu_df_counter)
-
-lm2<- as.formula(
-  paste(outcome,
-        paste(c(black,background1), collapse = " + "),
-        sep = " ~ "))
-model2<-lm(lm2, data = yu_df_counter)
-
-lm3<- as.formula(
-  paste(outcome,
-        paste(c(black,background1,occexp), collapse = " + "),
-        sep = " ~ "))
-model3<-lm(lm3, data = yu_df_counter)
-
-lm4<- as.formula(
-  paste(outcome,
-        paste(c(black,background1,occexp,region), collapse = " + "),
-       sep = " ~ "))
-model4<-lm(lm4,  data = yu_df_counter)
-
-lm5<- as.formula(
-  paste(outcome,
-        paste(c(black,background1,occexp,region, "log_real_yearly_earnings_1"), collapse = " + "),
-       sep = " ~ "))
-model5<-lm(lm5,  data = yu_df_counter)
-```
-
-```{r,  echo = TRUE, results = 'asis'}
-stargazer(model1, model2,model3, model4,model5,
-          title="OLS regression of counterfactual difference in log earnings between t and t+1 for program particpants, consecutively adding more covariates",
-          type = 'html',
-          omit=c(background1,occexp,region,"log_real_yearly_earnings_1"),
-          df = FALSE,
-          add.lines = list(c("Demographics", "No", "Yes", "Yes", "Yes","Yes"),c("Occupation+Experience", "No", "No","Yes","Yes", "Yes"),  c("Local labor market characteristics", "No", "No", "No", "Yes","Yes" ), c("Earnings at t", "No", "No", "No", "No","Yes")),
-          notes.append = FALSE,
-          notes = c("Dependent variable: predicted change in log earnings.","Significance level: * p$<$0.10, ** p$<$0.05, *** p$<$0.01. For further notes, see text." )
-)
-
-```
-
-```{r,  echo = TRUE, results = 'asis'}
-
-dec_long_2 <- dec_covar(object = model5, var_main = c("black"), format = "long", add_coefs = TRUE, conf.int = TRUE)
-
-# add occupation group
- dec_long_2a<-dec_long_2 %>%
-   mutate(group= if_else(covariate %in% c("male"), "male",
-            if_else(covariate %in% c("age", "age2"), "age",
-                         if_else(covariate %in% c("race_white","race_asian"), "race",
-                                if_else(covariate %in% c("experience", "experience2"), "experience",
-                                        if_else(covariate %in% c("log_real_yearly_earnings_1"), "pre-earnings",
-   if_else(covariate %in% occupation, "occupation_group",
-           if_else(covariate %in% tasks, "occupation_tasks",
-           if_else(covariate %in% region, "regional",   
-                         "education")))))))))
-# 
-# 
-sumthose<-  c("beta_K", "beta_K_low", "beta_K_high",
-              "gamma","gamma_low", "gamma_high", "delta")
-
-keepthose<- c("beta_var_base", "beta_var_full")
-
-dec_long_2b <- dec_long_2a %>%
-  group_by(group)%>%
-  summarise_at(vars(all_of(sumthose)), funs(sum), na.rm=TRUE)%>%
-  rename(covariate=group)
-
-dec_long_2c <- dec_long_2a %>%
-  group_by(group)%>%
-  summarise_at(vars(all_of(keepthose)), funs(max), na.rm=TRUE)%>%
-  rename(covariate=group)
-
-dec_long_2d <-left_join(dec_long_2b,dec_long_2c,by="covariate")
-
-dec_long_2d$variable<-c(rep("black", times=(dim(dec_long_2d)[1])))
-
-plot_dec(dec_long_2d) +
-   ggtitle("Effect of each covariate group on the black coef")
-```
-
-### Race (Black) - Difference in actual vs counterfactual change in earnings
-
-Finally, to get the difference in actual vs counterfactual earnings, we take a simple difference. This was accomplished in code by reshaping the yu_treatment_control dataframe from long to wide, using the "treatment" variable as the key. Then, the actual column was subtracted by the counterfactual column to produce the change column, which is the outcome variable in the decomposition analysis.
-
-```{r, echo=FALSE}
-yu_df_diff <- tidyr::spread(yu_treatment_control, treatment, log_d_earn)
-names(yu_df_diff)[names(yu_df_diff)=="0"] <- "log_d_earn_counterfactual"
-names(yu_df_diff)[names(yu_df_diff)=="1"] <- "log_d_earn_actual"
-yu_df_diff$log_d_earn_change <- (yu_df_diff$log_d_earn_actual - yu_df_diff$log_d_earn_counterfactual)
-yu_df_diff <- dummy_cols(yu_df_diff, select_columns = 'occ1digit')
-```
-
-```{r,echo = TRUE}
-outcome<- "log_d_earn_change"
-lm1<- as.formula(
-  paste(outcome,
-        paste(c(black), collapse = " + "),
-        sep = " ~ "))
-model1<-lm(lm1, data = yu_df_diff)
-
-lm2<- as.formula(
-  paste(outcome,
-        paste(c(black,background1), collapse = " + "),
-        sep = " ~ "))
-model2<-lm(lm2, data = yu_df_diff)
-
-lm3<- as.formula(
-  paste(outcome,
-        paste(c(black,background1,occexp), collapse = " + "),
-        sep = " ~ "))
-model3<-lm(lm3, data = yu_df_diff)
-
-lm4<- as.formula(
-  paste(outcome,
-        paste(c(black,background1,occexp,region), collapse = " + "),
-       sep = " ~ "))
-model4<-lm(lm4,  data = yu_df_diff)
-
-lm5<- as.formula(
-  paste(outcome,
-        paste(c(black,background1,occexp,region, "log_real_yearly_earnings_1"), collapse = " + "),
-       sep = " ~ "))
-model5<-lm(lm5,  data = yu_df_diff)
-```
-
-```{r,  echo = TRUE, results = 'asis'}
-stargazer(model1, model2,model3, model4,model5,
-          title="OLS regression of counterfactual difference in log earnings between t and t+1 for program particpants, consecutively adding more covariates",
-          type = 'html',
-          omit=c(background1,occexp,region,"log_real_yearly_earnings_1"),
-          df = FALSE,
-          add.lines = list(c("Demographics", "No", "Yes", "Yes", "Yes","Yes"),c("Occupation+Experience", "No", "No","Yes","Yes", "Yes"),  c("Local labor market characteristics", "No", "No", "No", "Yes","Yes" ), c("Earnings at t", "No", "No", "No", "No","Yes")),
-          notes.append = FALSE,
-          notes = c("Dependent variable: predicted change in log earnings.","Significance level: * p$<$0.10, ** p$<$0.05, *** p$<$0.01. For further notes, see text." )
-)
-
-```
-
-```{r,  echo = TRUE, results = 'asis'}
-
-dec_long_2 <- dec_covar(object = model5, var_main = c("black"), format = "long", add_coefs = TRUE, conf.int = TRUE)
-
-# add occupation group
- dec_long_2a<-dec_long_2 %>%
-   mutate(group= if_else(covariate %in% c("male"), "male",
-            if_else(covariate %in% c("age", "age2"), "age",
-                         if_else(covariate %in% c("race_white","race_asian"), "race",
-                                if_else(covariate %in% c("experience", "experience2"), "experience",
-                                        if_else(covariate %in% c("log_real_yearly_earnings_1"), "pre-earnings",
-   if_else(covariate %in% occupation, "occupation_group",
-           if_else(covariate %in% tasks, "occupation_tasks",
-           if_else(covariate %in% region, "regional",   
-                         "education")))))))))
-# 
-# 
-sumthose<-  c("beta_K", "beta_K_low", "beta_K_high",
-              "gamma","gamma_low", "gamma_high", "delta")
-
-keepthose<- c("beta_var_base", "beta_var_full")
-
-dec_long_2b <- dec_long_2a %>%
-  group_by(group)%>%
-  summarise_at(vars(all_of(sumthose)), funs(sum), na.rm=TRUE)%>%
-  rename(covariate=group)
-
-dec_long_2c <- dec_long_2a %>%
-  group_by(group)%>%
-  summarise_at(vars(all_of(keepthose)), funs(max), na.rm=TRUE)%>%
-  rename(covariate=group)
-
-dec_long_2d <-left_join(dec_long_2b,dec_long_2c,by="covariate")
-
-dec_long_2d$variable<-c(rep("black", times=(dim(dec_long_2d)[1])))
-
-plot_dec(dec_long_2d) +
-   ggtitle("Effect of each covariate group on the black coef")
-```
-
-
-```{r, echo = TRUE}
-dec_long_2<-dec_long_2 %>%
-  filter(!(covariate %in% c(region, colnames(occ_group1))))
-
-plot_gamma_beta(dec_long_2, add_CI = TRUE) +
-  ggtitle("Covariate impact: direct (beta) and indirect (gamma) impact")
-```
-
-## Age Decomposition
-
-### Age - Actual changes in wage
-
-```{r,echo = FALSE}
-
-yu_treatment_control <- yu_treatment_control %>% rename(age=age)
-yu_df<- yu_treatment_control %>% filter(treatment==1)
-
-
-yu_df <- dummy_cols(yu_df, select_columns = 'occ1digit')
-
-```
-
-```{r,echo = TRUE }
-outcome<- "log_d_earn"#"log_d_earn"#""
-
-age<- c("age")#,#"log_real_yearly_earnings_1")
-
-# cps <- dummy_cols(cps, select_columns = 'occ1digit')
-occ_group1 <-yu_df %>%
-  select(tidyselect::vars_select(colnames(cps_vars), starts_with('occ1digit_', ignore.case = TRUE)))
-occupation<-colnames(occ_group1)
-occupation<-occupation[occupation!="occ1digit_transport"] 
-
-tasks<-c("task_abstract","task_routine","task_manual" )
-background1<-c("black","race_white","race_asian","edu_num","male")
-
-occexp<- c("experience",tasks)#,occupation)
-            
-
-region<-c("cty_pop2000","cz_pop2000","intersects_msa",
-                    "cs00_seg_inc","cs00_seg_inc_pov25","cs00_seg_inc_aff75",
-                    "cs_race_theil_2000","gini99","poor_share","inc_share_1perc",
-                    "frac_middleclass","rel_tot","cs_frac_black",
-                    "cs_frac_hisp","unemp_rate","pop_d_2000_1980","lf_d_2000_1980",
-                    "cs_labforce","cs_elf_ind_man","cs_born_foreign","mig_inflow",
-                    "mig_outflow","pop_density","frac_traveltime_lt15","hhinc00",
-                    "median_house_value","cs_educ_ba",
-                    "cs_fam_wkidsinglemom","crime_total","subcty_exp_pc",
-                    "taxrate","tax_st_diff_top20")
-
-```
-
-
-```{r,echo = TRUE}
-outcome<- "log_d_earn"
-lm1<- as.formula(
-  paste(outcome,
-        paste(c(age), collapse = " + "),
-        sep = " ~ "))
-model1<-lm(lm1, data = yu_df)
-
-lm2<- as.formula(
-  paste(outcome,
-        paste(c(age,background1), collapse = " + "),
-        sep = " ~ "))
-model2<-lm(lm2, data = yu_df)
-
-lm3<- as.formula(
-  paste(outcome,
-        paste(c(age,background1,occexp), collapse = " + "),
-        sep = " ~ "))
-model3<-lm(lm3, data = yu_df)
-
-lm4<- as.formula(
-  paste(outcome,
-        paste(c(age,background1,occexp,region), collapse = " + "),
-       sep = " ~ "))
-model4<-lm(lm4,  data = yu_df)
-
-lm5<- as.formula(
-  paste(outcome,
-        paste(c(age,background1,occexp,region, "log_real_yearly_earnings_1"), collapse = " + "),
-       sep = " ~ "))
-model5<-lm(lm5,  data = yu_df)
-```
-
-```{r,  echo = TRUE, results = 'asis'}
-
-dec_long_2 <- dec_covar(object = model5, var_main = c("age"), format = "long", add_coefs = TRUE, conf.int = TRUE)
-
-# add occupation group
- dec_long_2a<-dec_long_2 %>%
-   mutate(group= if_else(covariate %in% c("male"), "male",
-                         if_else(covariate %in% c("black","race_white","race_asian"), "race",
-                                if_else(covariate %in% c("experience", "experience2"), "experience",
-                                        if_else(covariate %in% c("log_real_yearly_earnings_1"), "pre-earnings",
-   if_else(covariate %in% occupation, "occupation_group",
-           if_else(covariate %in% tasks, "occupation_tasks",
-           if_else(covariate %in% region, "regional",   
-                         "education"))))))))
-# 
-# 
-sumthose<-  c("beta_K", "beta_K_low", "beta_K_high",
-              "gamma","gamma_low", "gamma_high", "delta")
-
-keepthose<- c("beta_var_base", "beta_var_full")
-
-dec_long_2b <- dec_long_2a %>%
-  group_by(group)%>%
-  summarise_at(vars(all_of(sumthose)), funs(sum), na.rm=TRUE)%>%
-  rename(covariate=group)
-
-dec_long_2c <- dec_long_2a %>%
-  group_by(group)%>%
-  summarise_at(vars(all_of(keepthose)), funs(max), na.rm=TRUE)%>%
-  rename(covariate=group)
-
-dec_long_2d <-left_join(dec_long_2b,dec_long_2c,by="covariate")
-
-dec_long_2d$variable<-c(rep("age", times=(dim(dec_long_2d)[1])))
-
-plot_dec(dec_long_2d) +
-   ggtitle("Effect of each covariate group on the age coef")
-```
-
-### Age - Counterfactual Predictions
-
-The tutorial took us through the steps of decomposing the change in actual wages. This was accomplished by selecting the subset "treatment=1" in the "yu_treatment_control" dataframe. To do the same analysis for the counterfactual, we select the subset "treatment=0".
-
-```{r, echo=FALSE}
-yu_df_counter <- yu_treatment_control %>% filter(treatment==0)
-yu_df_counter <- dummy_cols(yu_df_counter, select_columns = 'occ1digit')
-```
-
-
-```{r,echo = TRUE}
-outcome<- "log_d_earn"
-lm1<- as.formula(
-  paste(outcome,
-        paste(c(age), collapse = " + "),
-        sep = " ~ "))
-model1<-lm(lm1, data = yu_df_counter)
-
-lm2<- as.formula(
-  paste(outcome,
-        paste(c(age,background1), collapse = " + "),
-        sep = " ~ "))
-model2<-lm(lm2, data = yu_df_counter)
-
-lm3<- as.formula(
-  paste(outcome,
-        paste(c(age,background1,occexp), collapse = " + "),
-        sep = " ~ "))
-model3<-lm(lm3, data = yu_df_counter)
-
-lm4<- as.formula(
-  paste(outcome,
-        paste(c(age,background1,occexp,region), collapse = " + "),
-       sep = " ~ "))
-model4<-lm(lm4,  data = yu_df_counter)
-
-lm5<- as.formula(
-  paste(outcome,
-        paste(c(age,background1,occexp,region, "log_real_yearly_earnings_1"), collapse = " + "),
-       sep = " ~ "))
-model5<-lm(lm5,  data = yu_df_counter)
-```
-
-```{r,  echo = TRUE, results = 'asis'}
-stargazer(model1, model2,model3, model4,model5,
-          title="OLS regression of counterfactual difference in log earnings between t and t+1 for program particpants, consecutively adding more covariates",
-          type = 'html',
-          omit=c(background1,occexp,region,"log_real_yearly_earnings_1"),
-          df = FALSE,
-          add.lines = list(c("Demographics", "No", "Yes", "Yes", "Yes","Yes"),c("Occupation+Experience", "No", "No","Yes","Yes", "Yes"),  c("Local labor market characteristics", "No", "No", "No", "Yes","Yes" ), c("Earnings at t", "No", "No", "No", "No","Yes")),
-          notes.append = FALSE,
-          notes = c("Dependent variable: predicted change in log earnings.","Significance level: * p$<$0.10, ** p$<$0.05, *** p$<$0.01. For further notes, see text." )
-)
-
-```
-
-```{r,  echo = TRUE, results = 'asis'}
-
-dec_long_2 <- dec_covar(object = model5, var_main = c("age"), format = "long", add_coefs = TRUE, conf.int = TRUE)
-
-# add occupation group
- dec_long_2a<-dec_long_2 %>%
-   mutate(group= if_else(covariate %in% c("male"), "male",
-                         if_else(covariate %in% c("black","race_white","race_asian"), "race",
-                                if_else(covariate %in% c("experience", "experience2"), "experience",
-                                        if_else(covariate %in% c("log_real_yearly_earnings_1"), "pre-earnings",
-   if_else(covariate %in% occupation, "occupation_group",
-           if_else(covariate %in% tasks, "occupation_tasks",
-           if_else(covariate %in% region, "regional",   
-                         "education"))))))))
-# 
-# 
-sumthose<-  c("beta_K", "beta_K_low", "beta_K_high",
-              "gamma","gamma_low", "gamma_high", "delta")
-
-keepthose<- c("beta_var_base", "beta_var_full")
-
-dec_long_2b <- dec_long_2a %>%
-  group_by(group)%>%
-  summarise_at(vars(all_of(sumthose)), funs(sum), na.rm=TRUE)%>%
-  rename(covariate=group)
-
-dec_long_2c <- dec_long_2a %>%
-  group_by(group)%>%
-  summarise_at(vars(all_of(keepthose)), funs(max), na.rm=TRUE)%>%
-  rename(covariate=group)
-
-dec_long_2d <-left_join(dec_long_2b,dec_long_2c,by="covariate")
-
-dec_long_2d$variable<-c(rep("age", times=(dim(dec_long_2d)[1])))
-
-plot_dec(dec_long_2d) +
-   ggtitle("Effect of each covariate group on the age coef")
-```
-
-### Age - Difference in actual vs counterfactual change in earnings
-
-Finally, to get the difference in actual vs counterfactual earnings, we take a simple difference. This was accomplished in code by reshaping the yu_treatment_control dataframe from long to wide, using the "treatment" variable as the key. Then, the actual column was subtracted by the counterfactual column to produce the change column, which is the outcome variable in the decomposition analysis.
-
-```{r, echo=FALSE}
-yu_df_diff <- tidyr::spread(yu_treatment_control, treatment, log_d_earn)
-names(yu_df_diff)[names(yu_df_diff)=="0"] <- "log_d_earn_counterfactual"
-names(yu_df_diff)[names(yu_df_diff)=="1"] <- "log_d_earn_actual"
-yu_df_diff$log_d_earn_change <- (yu_df_diff$log_d_earn_actual - yu_df_diff$log_d_earn_counterfactual)
-yu_df_diff <- dummy_cols(yu_df_diff, select_columns = 'occ1digit')
-```
-
-```{r,echo = TRUE}
-outcome<- "log_d_earn_change"
-lm1<- as.formula(
-  paste(outcome,
-        paste(c(age), collapse = " + "),
-        sep = " ~ "))
-model1<-lm(lm1, data = yu_df_diff)
-
-lm2<- as.formula(
-  paste(outcome,
-        paste(c(age,background1), collapse = " + "),
-        sep = " ~ "))
-model2<-lm(lm2, data = yu_df_diff)
-
-lm3<- as.formula(
-  paste(outcome,
-        paste(c(age,background1,occexp), collapse = " + "),
-        sep = " ~ "))
-model3<-lm(lm3, data = yu_df_diff)
-
-lm4<- as.formula(
-  paste(outcome,
-        paste(c(age,background1,occexp,region), collapse = " + "),
-       sep = " ~ "))
-model4<-lm(lm4,  data = yu_df_diff)
-
-lm5<- as.formula(
-  paste(outcome,
-        paste(c(age,background1,occexp,region, "log_real_yearly_earnings_1"), collapse = " + "),
-       sep = " ~ "))
-model5<-lm(lm5,  data = yu_df_diff)
-```
-
-```{r,  echo = TRUE, results = 'asis'}
-stargazer(model1, model2,model3, model4,model5,
-          title="OLS regression of counterfactual difference in log earnings between t and t+1 for program particpants, consecutively adding more covariates",
-          type = 'html',
-          omit=c(background1,occexp,region,"log_real_yearly_earnings_1"),
-          df = FALSE,
-          add.lines = list(c("Demographics", "No", "Yes", "Yes", "Yes","Yes"),c("Occupation+Experience", "No", "No","Yes","Yes", "Yes"),  c("Local labor market characteristics", "No", "No", "No", "Yes","Yes" ), c("Earnings at t", "No", "No", "No", "No","Yes")),
-          notes.append = FALSE,
-          notes = c("Dependent variable: predicted change in log earnings.","Significance level: * p$<$0.10, ** p$<$0.05, *** p$<$0.01. For further notes, see text." )
-)
-
-```
-
-```{r,  echo = TRUE, results = 'asis'}
-
-dec_long_2 <- dec_covar(object = model5, var_main = c("age"), format = "long", add_coefs = TRUE, conf.int = TRUE)
-
-# add occupation group
- dec_long_2a<-dec_long_2 %>%
-   mutate(group= ifelse(covariate %in% c("male"), "male",
-                         if_else(covariate %in% c("black","race_white","race_asian"), "race",
-                                if_else(covariate %in% c("experience", "experience2"), "experience",
-                                        if_else(covariate %in% c("log_real_yearly_earnings_1"), "pre-earnings",
-   if_else(covariate %in% occupation, "occupation_group",
-           if_else(covariate %in% tasks, "occupation_tasks",
-           if_else(covariate %in% region, "regional",   
-                         "education"))))))))
-# 
-# 
-sumthose<-  c("beta_K", "beta_K_low", "beta_K_high",
-              "gamma","gamma_low", "gamma_high", "delta")
-
-keepthose<- c("beta_var_base", "beta_var_full")
-
-dec_long_2b <- dec_long_2a %>%
-  group_by(group)%>%
-  summarise_at(vars(all_of(sumthose)), funs(sum), na.rm=TRUE)%>%
-  rename(covariate=group)
-
-dec_long_2c <- dec_long_2a %>%
-  group_by(group)%>%
-  summarise_at(vars(all_of(keepthose)), funs(max), na.rm=TRUE)%>%
-  rename(covariate=group)
-
-dec_long_2d <-left_join(dec_long_2b,dec_long_2c,by="covariate")
-
-dec_long_2d$variable<-c(rep("age", times=(dim(dec_long_2d)[1])))
-
-plot_dec(dec_long_2d) +
-   ggtitle("Effect of each covariate group on the age coef")
-```
-
-```{r, echo = TRUE}
-dec_long_2<-dec_long_2 %>%
-  filter(!(covariate %in% c(region, colnames(occ_group1))))
-
-plot_gamma_beta(dec_long_2, add_CI = TRUE) +
-  ggtitle("Covariate impact: direct (beta) and indirect (gamma) impact")
-```
-
-
-# Additional Analyses
-
-## Heterogeneity by Race and Gender
-
-In this section, we explore the dynamics between race and gender. Since both variables are binary, this amounts to comparing the treatment effects between four groups. Of the 1132 individuals, we have 250 Black men, 209 Black women, 379 non-Black men, and 294 non-Black women.
-
-```{r interacted_treat_effect_race}
-yu_df <- yu_treatment_control
-n_digits <- 4
-
-ate<-lm(log_d_earn~treatment + male*treatment+male, data = subset(yu_df, black==1))
-beta1 <- summary(ate)$coefficients[2,1]
-beta2 <- summary(ate)$coefficients[3,1]
-beta3 <- summary(ate)$coefficients[4,1]
-
-black_female <- exp(beta1)-1
-black_male <- exp(beta1+beta3)-1
-
-ate<-lm(log_d_earn~treatment + male*treatment+male, data = subset(yu_df, black==0))
-beta1 <- summary(ate)$coefficients[2,1]
-beta2 <- summary(ate)$coefficients[3,1]
-beta3 <- summary(ate)$coefficients[4,1]
-
-nonblack_female <- exp(beta1)-1
-nonblack_male <- exp(beta1+beta3)-1
-
-paste0("YU treatment effect for Black females: ", round(black_female, n_digits)*100, "%")
-paste0("YU treatment effect for Black males: ", round(black_male, n_digits)*100, "%")
-paste0("YU treatment effect for non-Black females: ", round(nonblack_female, n_digits)*100, "%")
-paste0("YU treatment effect for non-Black males: ", round(nonblack_male, n_digits)*100, "%")
-paste0("---------------------------------------")
-paste0("YU treatment effect on growth rate for Black females is ", 
-       round(black_female-black_male, n_digits)*100, " percentage points higher than for Black males ")
-
-paste0("YU treatment effect on growth rate for non-Black females is ", 
-       round(nonblack_female-nonblack_male, n_digits)*100, " percentage points higher than for non-Black males ")
-
-paste0("YU treatment effect on growth rate for non-Black males is ", 
-       round(nonblack_male-black_male, n_digits)*100, " percentage points higher than for Black males ")
-
-paste0("YU treatment effect on growth rate for non-Black females is ", 
-       round(nonblack_female-black_female, n_digits)*100, " percentage points higher than for Black females ")
-
-
-paste0("Full Interactions Model")
-ate<-lm(log_d_earn~treatment + male + black + male*black + 
-          male*treatment + black*treatment + male*black*treatment, 
-        data = yu_df)
-summary(ate)
-
-beta1 <- summary(ate)$coefficients[2,1]
-beta2 <- summary(ate)$coefficients[3,1]
-beta3 <- summary(ate)$coefficients[4,1]
-beta4 <- summary(ate)$coefficients[5,1]
-beta5 <- summary(ate)$coefficients[6,1]
-beta6 <- summary(ate)$coefficients[7,1]
-beta7 <- summary(ate)$coefficients[8,1]
-```
-
-We see that the group with the lowest treatment effect is indeed Black males, consistent with the result that Black people and males see lower treatment effects. However, it is interesting to note that the coefficient of the full interaction term is positive, though only significant at the 10% level. This reflects the fact that the racial gap in treatment effects is much larger for women than for men. The treatment effect gap in real earnings growth between non-Black women and Black women is 18.09 percentage points while the gap between non-Black men and Black men is only 4.17 percentage points. An alternative interpretation is that the gender gap in treatment effects is much larger for non-Black people than for Black people. The treatment effect gap between non-Black women and men is 25.69 percentage points while the gap between Black women and men is 11.77 percentage points.
-
-
-
-
-
-
-
 
