@@ -771,235 +771,6 @@ ggplot(cps_df_log_test_grouped) +
 ```
 
 
-### Model Calibration by Subgroups
-Having performed an overall model calibration analysis, we will perform the same analysis for different subgroups. We want to make sure that the model is robust and well calibrated not just across all observations but also across different subgroups of observations. Because the lasso and ridge models have performed better than the random forest model, we will use only the former two to perform the calibration by subgroups analysis. 
-
-#### Calibration By Gender 
-We perform calibration analysis by using gender to create subgroups. 
-
-```{r ridge_calib_gender}
-
-# Plot the ridge regression model line using gender as a subgroup along with a line for a hypothetical, perfectly calibrated model 
-ggplot(cps_df_log_test, aes(x = ridge_predictions_test, y = log_d_earn, fill=factor(sex))) +
-  geom_point(aes(fill=factor(sex)),colour="transparent",shape=21) +
-  stat_smooth(aes(colour=factor(sex)),method="lm",se = FALSE) + 
-  geom_abline(slope=1, intercept = 0) +
-  xlab("predicted log earn changes, CPS Test by Gender") +
-  ylab("actual log earn changes , CPS Test by Gender") +
-  theme_minimal()
-```
-```{r ridge_calib_male}
-# Run a calibration regression for male observations to obtain the slope of the regression model line plotted
-summary(lm(log_d_earn~ ridge_predictions_test, data=subset(cps_df_log_test, sex==1))) # sex==1 is male
-```
-
-```{r ridge_calib_female}
-# Run a calibration regression for female observations to obtain the slope of the regression model line plotted
-summary(lm(log_d_earn~ ridge_predictions_test, data=subset(cps_df_log_test, sex==0))) # sex==0 is female
-```
-The plot above allows us to compare the line of a hypothetical, perfectly-calibrated model (black line) with the lines of our ridge wage prediction model for male observations (blue line) and for female observations (pink line). Using the plot, we can see that the ridge model slope for female observations is very close to that of the perfectly calibrated model (as observed by the positioning of the lines as well), which implies that the actual and predicted log yearly earning changes of the ridge model for female observations are very similar to each other. 
-
-On the other hand, for male observations, the slope of the ridge regression line is slightly steeper than that of the perfectly calibrated model, which implies that the ridge model slightly under-predicts the actual log yearly earning changes at lower values and slightly over-predicts the actual log yearly earning changes at higher values. However, the difference are very slight. The regression output for calibration regression on the two models separately also coroborate our above observations
-
-
-Next, we plot the calibration decile plots for the subgroup of male and females separately. Both plots are equally non-linear, which suggets that the calibrations are not that good for both male and female subgroups; the 3rd-9th decile for males are relatively good, but the female decile plots are a bit less linear.
-
-```{r ridgecalibration_ntiles_male}
-#Male
-num_tiles <- 10  
-
-cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$ridge_predictions_test, n=num_tiles))
-cps_df_log_test_grouped <- cps_df_log_test %>% 
-  filter(sex == 1) %>%
-  group_by(ntile) %>% 
-  summarise(mean = mean(log_d_earn),
-            std = sd(log_d_earn), 
-            std_err=std/sqrt(dim(cps_df_log_test)[1]))
-  ggplot(cps_df_log_test_grouped) +
-  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
-                  size = 0.5,
-                  position = position_dodge(width = .5)) +
-  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
-                width = 0.4,
-                size = 0.75,
-                position = position_dodge(width = .5)) +
-  theme_linedraw() +
-  labs(x = "Deciles of predicted earning changes", y = "Mean actual changes in log earnings within deciles", title = "Calibration plot using deciles for better visibility")
-```
-
-```{r ridgecalibration_ntiles_female}
-#Female
-
-num_tiles <- 10  
-
-cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$ridge_predictions_test, n=num_tiles))
-cps_df_log_test_grouped <- cps_df_log_test %>% 
-  filter(sex == 0) %>%
-  group_by(ntile) %>% 
-  summarise(mean = mean(log_d_earn),
-            std = sd(log_d_earn), 
-            std_err=std/sqrt(dim(cps_df_log_test)[1]))
-  ggplot(cps_df_log_test_grouped) +
-  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
-                  size = 0.5,
-                  position = position_dodge(width = .5)) +
-  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
-                width = 0.4,
-                size = 0.75,
-                position = position_dodge(width = .5)) +
-  theme_linedraw() +
-  labs(x = "Deciles of predicted earning changes", y = "Mean actual changes in log earnings within deciles", title = "Calibration plot using deciles for better visibility")
-```
-
-
-#### Calibration By Region
-
-We will perform a similar calibration analysis but this time using region size to create subgroups.
-
-```{r region_cat}
-# Reverse the scaling of the column representing region's size category to make the plots more understandable 
-cps_df_log_test$region_large_unscaled <-cps_df_log_test_unscaled$region_large
-
-```
-
-```{r ridge_calib_region}
-
-ggplot(cps_df_log_test, aes(x=ridge_predictions_test, y=log_d_earn, fill=factor(region_large_unscaled))) +
-  geom_point(aes(fill=factor(region_large_unscaled)),colour="transparent",shape=21) +
-  stat_smooth(aes(colour=factor(region_large_unscaled)),method="lm",se = FALSE) + 
-  geom_abline(slope=1, intercept = 0) +
-  xlab("predicted log earn changes, CPS Test by Region") +
-  ylab("actual log earn changes , CPS Test by Region") +
-  theme_minimal()
-
-table(cps_df_log_test$region_large_unscaled)
-
-```
-
-The plot above allows us to compare the line of a hypothetical, perfectly-calibrated model (black line) with the lines of our ridge wage prediction model for observations from one of the 4 regions, where region 1 is the smallest and region 4 is the largest. 
-
-In order to better understand the model calibration by region, we look at the distribution of observations across different regions. We observe that region 2 has the smallest number of observations (almost half as many as regions 3 and 4). We also observe from the calibration plot that the ridge model slope for region 2 is lower than that of the perfectly calibrated model, which implies that the ridge model over-predicts the actual log yearly earning changes at lower values and under-predicts the actual log yearly earning changes at higher values. Thus, we could explain the worse performance of the model in predicting log earning changes for observations in region 2 due to the small number of observations from that region. 
-
-In addition, lines for regions 1 and 3 show that the model predictions are better calibrated for these regions than for region 2; however, they are not as well calibrated as the line for region 4, which is the region with the highest number of observations. This shows the importance of having a balanced set of observations from different subgroups in obtaining a well calibrated model performance across subgroups.
-
-Again, the over- and under-predictions we observe for the ridge model are not large enough to make this model an unfit candidate for the wage prediction model.
-
-```{r ridge_calib_region1}
-# Run a calibration regression for observations with region==1 to obtain the slope of the regression model line plotted
-summary(lm(log_d_earn~ ridge_predictions_test, data=subset(cps_df_log_test, region_large_unscaled==1))) 
-```
-
-
-```{r ridge_calib_region2}
-# [REGIONAL ANALYSIS ADJUSTMENT] It is likely that the cities YU operates do not fit with the region_large = 2
-
-# Run a calibration regression for observations with region==2 to obtain the slope of the regression model line plotted
- summary(lm(log_d_earn~ ridge_predictions_test, data=subset(cps_df_log_test, region_large_unscaled==2))) 
-```
-
-```{r ridge_calib_region3}
-# Run a calibration regression for observations with region==3 to obtain the slope of the regression model line plotted
-summary(lm(log_d_earn~ ridge_predictions_test, data=subset(cps_df_log_test, region_large_unscaled==3))) 
-```
-```{r ridge_calib_region4}
-# Run a calibration regression for observations with region==4 to obtain the slope of the regression model line plotted
-summary(lm(log_d_earn~ ridge_predictions_test, data=subset(cps_df_log_test, region_large_unscaled==4))) 
-```
-
-```{r ridgecalibration_ntiles_region1}
-
-num_tiles <- 10 
-cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$ridge_predictions_test, n=num_tiles))
-cps_df_log_test_grouped <- cps_df_log_test %>% 
-  dplyr::filter(region_large_unscaled==1) %>% 
-  group_by(ntile) %>% 
-  summarise(mean = mean(log_d_earn),
-            std = sd(log_d_earn), 
-            std_err=std/sqrt(dim(cps_df_log_test)[1]))
-  ggplot(cps_df_log_test_grouped) +
-  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
-                  size = 0.5,
-                  position = position_dodge(width = .5)) +
-  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
-                width = 0.4,
-                size = 0.75,
-                position = position_dodge(width = .5)) +
-  theme_linedraw() +
-  labs(x = "Deciles of predicted earning changes", y = "Mean actual earning changes within deciles", title = "Calibration plot for observations from Region 1 using deciles for better visibility")
-  
-```
-
-```{r ridgecalibration_ntiles_region2}
-# [REGIONAL ANALYSIS ADJUSTMENT] It is likely that the cities YU operates do not fit with the region_large = 2
-
-num_tiles <- 10 
-cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$ridge_predictions_test, n=num_tiles))
-cps_df_log_test_grouped <- cps_df_log_test %>% 
-  dplyr::filter(region_large_unscaled==2) %>% 
-  group_by(ntile) %>% 
-  summarise(mean = mean(log_d_earn),
-            std = sd(log_d_earn), 
-            std_err=std/sqrt(dim(cps_df_log_test)[1]))
-  ggplot(cps_df_log_test_grouped) +
-  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
-                  size = 0.5,
-                  position = position_dodge(width = .5)) +
-  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
-                width = 0.4,
-                size = 0.75,
-                position = position_dodge(width = .5)) +
-  theme_linedraw() +
-  labs(x = "Deciles of predicted earning changes", y = "Mean actual earning changes within deciles", title = "Calibration plot for observations from Region 2 using deciles for better visibility")
-  
-```
-
-```{r ridgecalibration_ntiles_region3}
-
-num_tiles <- 10 
-cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$ridge_predictions_test, n=num_tiles))
-cps_df_log_test_grouped <- cps_df_log_test %>% 
-  dplyr::filter(region_large_unscaled==3) %>% 
-  group_by(ntile) %>% 
-  summarise(mean = mean(log_d_earn),
-            std = sd(log_d_earn), 
-            std_err=std/sqrt(dim(cps_df_log_test)[1]))
-  ggplot(cps_df_log_test_grouped) +
-  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
-                  size = 0.5,
-                  position = position_dodge(width = .5)) +
-  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
-                width = 0.4,
-                size = 0.75,
-                position = position_dodge(width = .5)) +
-  theme_linedraw() +
-  labs(x = "Deciles of predicted earning changes", y = "Mean actual earning changes within deciles", title = "Calibration plot for observations from Region 3 using deciles for better visibility")
-  
-```
-
-
-```{r ridgecalibration_ntiles_region4}
-
-num_tiles <- 10 
-cps_df_log_test$ntile <- factor(ntile(cps_df_log_test$ridge_predictions_test, n=num_tiles))
-cps_df_log_test_grouped <- cps_df_log_test %>% 
-  dplyr::filter(region_large_unscaled==4) %>% 
-  group_by(ntile) %>% 
-  summarise(mean = mean(log_d_earn),
-            std = sd(log_d_earn), 
-            std_err=std/sqrt(dim(cps_df_log_test)[1]))
-  ggplot(cps_df_log_test_grouped) +
-  geom_pointrange(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
-                  size = 0.5,
-                  position = position_dodge(width = .5)) +
-  geom_errorbar(aes(x = ntile, y = mean, ymax = mean + 1.96 * std_err, ymin = mean - 1.96 * std_err), 
-                width = 0.4,
-                size = 0.75,
-                position = position_dodge(width = .5)) +
-  theme_linedraw() +
-  labs(x = "Deciles of predicted earning changes", y = "Mean actual earning changes within deciles", title = "Calibration plot for observations from Region 4 using deciles for better visibility")
-  
-```
-
 
 # Part II: Heterogeneity Analysis
 
@@ -1540,6 +1311,8 @@ In this portion, we will look at the performance of each city, particularly how 
 We are using cities as a proxy for the "regional" variable because looking at different cities are the most practical for Year-Up to look at.
 
 ```{r treat_effect_model_city}
+cities <- c("Atlanta", "Baltimore", "Boston", "Chicago", "Dallas", "Los.Angeles", "New.York.City", "Philadelphia", "Phoenix", "Providence", "San.Francisco", "Seattle", "Washington.DC")
+
 city_performance <- c("city_name", "counterfactual", "treatment", "treatment_effect")
 city_heterogenity <- data.frame(cz_name = character(), treatment_effect = double())
   
@@ -1617,8 +1390,6 @@ ate<-lm(log_d_earn~treatment + cz_name + sex + race_black + age + real_yearly_ea
 
 summary(ate)
 
-View(summary(ate)$coefficients)
-
 paste0("Coefficient on Treatment")
 exp(summary(ate)$coefficients[2,1])
 
@@ -1639,10 +1410,3 @@ exp(summary(ate)$coefficients[2,1])
 ```
 
 In the analysis above, it is important to note that even when taking into consideration geographic considerations (with cities as a proxy), the race and gender variables previously looked at are still significant: geographic differences does not seem to take this into account.
-
-```{r city_heterogeity_all_factors}
-ate<-lm(log_d_earn~treatment + cz_name + sex + cz_name*treatment + cz_name*sex, data = both)
-
-summary(ate)
-```
-
